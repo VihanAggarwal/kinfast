@@ -17,15 +17,18 @@ def test_jacobian_shape():
     assert J.shape == (8, 6, 2)
 
 def test_jacobian_matches_finite_difference():
-    chain = _chain()
+    # Use float64 + central differences: a fair numerical comparison. A float32
+    # one-sided difference is itself only accurate to ~1e-2 and cannot validate
+    # the analytic Jacobian to tight tolerance (the noise is in the check, not
+    # the code).
+    chain = compile_robot(parse_urdf_string(TWO_LINK), dtype=torch.float64)
     li = chain.link_index["l2"]
-    q = torch.tensor([[0.3, -0.4]])
+    q = torch.tensor([[0.3, -0.4]], dtype=torch.float64)
     J = jacobian(chain, q, li)  # (1,6,2)
-    eps = 1e-5
-    T0 = forward_kinematics(chain, q)[:, li]
+    eps = 1e-6
     for k in range(2):
         dq = torch.zeros_like(q); dq[0, k] = eps
-        T1 = forward_kinematics(chain, q + dq)[:, li]
-        # linear velocity columns via finite difference of position
-        dp = (T1[:, :3, 3] - T0[:, :3, 3]) / eps
-        assert torch.allclose(J[0, :3, k], dp[0], atol=1e-3)
+        Tp = forward_kinematics(chain, q + dq)[:, li, :3, 3]
+        Tm = forward_kinematics(chain, q - dq)[:, li, :3, 3]
+        dp = (Tp - Tm) / (2 * eps)  # central difference of ee position
+        assert torch.allclose(J[0, :3, k], dp[0], atol=1e-6)
