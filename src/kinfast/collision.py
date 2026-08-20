@@ -82,3 +82,51 @@ def distance_to_obstacles(model: SphereModel, q: torch.Tensor,
     dist = (C[:, :, None, :] - oc[None, None, :, :]).norm(dim=-1)  # (B,S,M)
     sd = dist - r[None, :, None] - orad[None, None, :]
     return sd.reshape(q.shape[0], -1).min(dim=1).values
+
+
+def collision_aware_ik(model: SphereModel, target_pos: torch.Tensor,
+                       q0: torch.Tensor, link_index: int,
+                       obs_centers: torch.Tensor, obs_radii: torch.Tensor,
+                       iters: int = 300, refine_iters: int = 200,
+                       lr: float = 0.05, refine_lr: float = 0.01,
+                       margin: float = 0.02, w_col: float = 10.0,
+                       jitter: float = 1e-2, seed: int = 0):
+    """Batched gradient-based IK that reaches target_pos (B,3) while keeping the
+    whole arm at least `margin` clear of the obstacles.
+
+    This is the payoff of everything being differentiable: FK gives the reaching
+    gradient, the sphere distance field gives the avoidance gradient, and Adam
+    descends both at once, in two stages (coarse then refine).
+
+    `jitter` deterministically perturbs the start (fixed `seed`): a sphere whose
+    center coincides exactly with an obstacle center sits at a gradient singularity
+    of the distance field (grad ||c_i - c_j|| = 0 at coincidence), and would never
+    move without it.
+
+    Like plain IK, this landscape has local minima — run a batch of seeds and take
+    the best by `info["pos_error"]`/`info["clearance"]`. Returns (q (B,dof), info).
+    """
+    chain = model.chain
+    lo, hi = chain.lower.to(q0.device), chain.upper.to(q0.device)
+    g = torch.Generator(device="cpu").manual_seed(seed)
+    noise = torch.randn(q0.shape, generator=g, dtype=q0.dtype).to(q0.device)
+    q = (q0.clone() + jitter * noise).requires_grad_(True)
+    for stage_iters, stage_lr in ((iters, lr), (refine_iters, refine_lr)):
+        opt = torch.optim.Adam([q], lr=stage_lr)
+        for _ in range(stage_iters):
+            opt.zero_grad()
+            ee = forward_kinematics(chain, q)[:, link_index, :3, 3]
+            pos_loss = ((ee - target_pos) ** 2).sum(dim=-1)
+            d = distance_to_obstacles(model, q, obs_centers, obs_radii)
+            col_loss = torch.relu(margin - d) ** 2
+            (pos_loss + w_col * col_loss).sum().backward()
+            opt.step()
+            with torch.no_grad():
+                q.clamp_(lo, hi)
+    q = q.detach()
+    ee = forward_kinematics(chain, q)[:, link_index, :3, 3]
+    info = {
+        "pos_error": (ee - target_pos).norm(dim=-1),
+        "clearance": distance_to_obstacles(model, q, obs_centers, obs_radii),
+    }
+    return q, info

@@ -28,14 +28,15 @@ class CompiledChain:
     topo_order: list
     lower: torch.Tensor          # (dof,)
     upper: torch.Tensor          # (dof,)
+    vmax: torch.Tensor           # (dof,) joint velocity limits (0 if unspecified)
     link_mass: torch.Tensor      # (n_links,)
     link_com: torch.Tensor       # (n_links, 3) COM in link frame
     link_inertia: torch.Tensor   # (n_links, 3, 3) inertia about COM in link frame
 
     def to(self, device):
         for name in ("parent", "joint_origin", "joint_axis", "joint_type",
-                     "q_index", "lower", "upper", "link_mass", "link_com",
-                     "link_inertia"):
+                     "q_index", "lower", "upper", "vmax", "link_mass",
+                     "link_com", "link_inertia"):
             setattr(self, name, getattr(self, name).to(device))
         return self
 
@@ -68,7 +69,7 @@ def compile_robot(robot: Robot, dtype=torch.float32) -> CompiledChain:
             [[ixx, ixy, ixz], [ixy, iyy, iyz], [ixz, iyz, izz]], dtype=dtype)
 
     joint_by_child = {j.child: j for j in robot.joints}
-    lowers, uppers = [], []
+    lowers, uppers, vels = [], [], []
     next_q = 0
     for name in names:
         i = index[name]
@@ -90,6 +91,7 @@ def compile_robot(robot: Robot, dtype=torch.float32) -> CompiledChain:
             next_q += 1
             lowers.append(j.limit[0])
             uppers.append(j.limit[1])
+            vels.append(j.velocity)
 
     # topological order: BFS from root using parent pointers
     order, frontier = [], [index[root]]
@@ -109,5 +111,6 @@ def compile_robot(robot: Robot, dtype=torch.float32) -> CompiledChain:
         q_index=q_index, topo_order=order,
         lower=torch.tensor(lowers, dtype=dtype),
         upper=torch.tensor(uppers, dtype=dtype),
+        vmax=torch.tensor(vels, dtype=dtype),
         link_mass=link_mass, link_com=link_com, link_inertia=link_inertia,
     )

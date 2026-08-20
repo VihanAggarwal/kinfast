@@ -83,6 +83,17 @@ class Robot:
     def forward_dynamics(self, q, qd, tau, use_gravity=True):
         return _dyn.forward_dynamics(self.chain, q, qd, tau, use_gravity=use_gravity)
 
+    # ---- trajectory ----
+    def point_to_point(self, q0, qf, amax=None, n=100):
+        """Time-optimal synchronized trapezoidal move under the URDF's velocity
+        limits (joints with no declared limit fall back to 1 rad/s)."""
+        from kinfast.trajectory import trapezoidal
+        vmax = self.chain.vmax.clone()
+        vmax[vmax <= 0] = 1.0
+        if amax is None:
+            amax = torch.full_like(vmax, 4.0)
+        return trapezoidal(q0, qf, vmax, amax, n=n)
+
     # ---- collision ----
     def sphere_model(self, spheres):
         """Build a collision SphereModel. spheres: {link_name_or_index: [(x,y,z,r)]}."""
