@@ -1,37 +1,56 @@
 # src/kinfast/fk.py
-"""Batched forward kinematics: propagate homogeneous transforms down the tree."""
+"""Batched forward kinematics: propagate homogeneous transforms down the tree.
+
+Vectorized: joint motions for ALL links are built in one batched Rodrigues call
+and composed with the fixed origins in one broadcast matmul; only the
+parent-to-child sweep (inherently sequential) loops, and it is one (B,4,4)
+matmul per link.
+"""
 import torch
 from kinfast import transforms as T
 from kinfast.compile import CompiledChain
 
 
-def _joint_motion(chain: CompiledChain, i: int, q: torch.Tensor) -> torch.Tensor:
-    """(B, 4, 4) local motion of joint i given batch config q (B, dof)."""
+def _local_transforms(chain: CompiledChain, q: torch.Tensor) -> torch.Tensor:
+    """(B, n_links, 4, 4): origin @ joint_motion for every link, in one pass."""
     B = q.shape[0]
+    n = chain.n_links
     device, dtype = q.device, q.dtype
-    jt = int(chain.joint_type[i])
-    if jt == 0:
-        return torch.eye(4, dtype=dtype, device=device).expand(B, 4, 4)
-    qi = q[:, int(chain.q_index[i])]
-    axis = chain.joint_axis[i].to(device)
-    if jt == 1:  # revolute
-        R = T.axis_angle_to_matrix(axis.expand(B, 3), qi)
-        t = torch.zeros(B, 3, dtype=dtype, device=device)
-        return T.make_transform(R, t)
-    # prismatic
-    R = torch.eye(3, dtype=dtype, device=device).expand(B, 3, 3)
-    t = axis.expand(B, 3) * qi.unsqueeze(-1)
-    return T.make_transform(R, t)
+    origin = chain.joint_origin
+    axes = chain.joint_axis
+    if origin.device != device:
+        origin, axes = origin.to(device), axes.to(device)
+    origin = origin.to(dtype)
+    axes = axes.to(dtype)
+
+    # per-link joint value: q[:, q_index] for movable links, 0 for fixed
+    movable = (chain.q_index.to(device) >= 0)
+    if chain.dof == 0:                                           # all-fixed robot
+        vals = torch.zeros(B, n, dtype=dtype, device=device)
+    else:
+        qidx = chain.q_index.to(device).clamp_min(0)             # (n,)
+        vals = q[:, qidx]                                        # (B,n)
+        vals = torch.where(movable.unsqueeze(0), vals, torch.zeros_like(vals))
+
+    jt = chain.joint_type.to(device)                             # (n,)
+    rev = movable & (jt == 1)
+    pris = movable & (jt == 2)
+
+    motion = torch.eye(4, dtype=dtype, device=device).expand(B, n, 4, 4).clone()
+    if bool(rev.any()):
+        R = T.axis_angle_to_matrix(axes.unsqueeze(0).expand(B, n, 3), vals)  # (B,n,3,3)
+        motion[:, rev, :3, :3] = R[:, rev]
+    if bool(pris.any()):
+        t = axes.unsqueeze(0) * vals.unsqueeze(-1)               # (B,n,3)
+        motion[:, pris, :3, 3] = t[:, pris]
+    return origin.unsqueeze(0) @ motion                          # (B,n,4,4)
 
 
 def forward_kinematics(chain: CompiledChain, q: torch.Tensor) -> torch.Tensor:
     """q (B, dof) -> world transforms (B, n_links, 4, 4)."""
-    B = q.shape[0]
-    device, dtype = q.device, q.dtype
-    origin = chain.joint_origin.to(device)
+    local = _local_transforms(chain, q)
     world = [None] * chain.n_links
     for i in chain.topo_order:
-        local = origin[i].expand(B, 4, 4) @ _joint_motion(chain, i, q)
         p = int(chain.parent[i])
-        world[i] = local if p < 0 else world[p] @ local
+        world[i] = local[:, i] if p < 0 else world[p] @ local[:, i]
     return torch.stack(world, dim=1)

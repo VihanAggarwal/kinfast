@@ -4,8 +4,28 @@
 Robustness is the moat: unknown tags are ignored, missing optional fields get
 sane defaults, and malformed numbers raise a clear error naming the joint/link.
 """
+import os
+import re
 import xml.etree.ElementTree as ET
 from kinfast.ir import Robot, Link, Joint, Inertial, Geometry
+
+# ROS substitution args that leak into published URDFs (e.g. Husky's
+# "$(optenv HUSKY_IMU_XYZ 0.19 0 0.149)"). Real files ship like this, so we
+# expand them: $(env NAME) reads the environment (error if unset),
+# $(optenv NAME default...) reads the environment or falls back to the default.
+_SUBST = re.compile(r"\$\(\s*(env|optenv)\s+(\S+?)((?:\s+[^\s)]+)*)\s*\)")
+
+
+def _expand_substitutions(text: str) -> str:
+    def repl(m):
+        kind, name, default = m.group(1), m.group(2), m.group(3).strip()
+        val = os.environ.get(name)
+        if val is not None:
+            return val
+        if kind == "optenv":
+            return default  # may be empty, matching ROS semantics
+        raise ValueError(f"$(env {name}): environment variable not set and no default")
+    return _SUBST.sub(repl, text)
 
 
 def _floats(text, n, where):
@@ -77,6 +97,7 @@ def _parse_joint(el) -> Joint:
 
 
 def parse_urdf_string(text: str) -> Robot:
+    text = _expand_substitutions(text)
     root = ET.fromstring(text)
     if root.tag != "robot":
         raise ValueError(f"root element must be <robot>, got <{root.tag}>")

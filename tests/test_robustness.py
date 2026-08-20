@@ -115,6 +115,22 @@ SCRAMBLED = """
 """
 
 
+def test_ros_substitution_args_expanded():
+    """Real published URDFs (e.g. Husky) contain unexpanded ROS substitution
+    args like $(optenv NAME default...). The parser expands them."""
+    urdf = """
+    <robot name="sub">
+      <link name="base"/><link name="imu"/>
+      <joint name="imu_joint" type="fixed"><parent link="base"/><child link="imu"/>
+        <origin xyz="$(optenv HUSKY_IMU_XYZ 0.19 0 0.149)" rpy="0 0 0"/></joint>
+    </robot>
+    """
+    chain = compile_robot(parse_urdf_string(urdf), dtype=torch.float64)
+    world = forward_kinematics(chain, torch.zeros(1, 0, dtype=torch.float64))
+    imu = world[0, chain.link_index["imu"], :3, 3]
+    assert torch.allclose(imu, torch.tensor([0.19, 0.0, 0.149], dtype=torch.float64), atol=1e-12)
+
+
 def test_scrambled_declaration_order():
     chain = compile_robot(parse_urdf_string(SCRAMBLED), dtype=torch.float64)
     assert chain.dof == 2
