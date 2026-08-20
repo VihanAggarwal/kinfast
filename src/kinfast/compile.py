@@ -28,10 +28,14 @@ class CompiledChain:
     topo_order: list
     lower: torch.Tensor          # (dof,)
     upper: torch.Tensor          # (dof,)
+    link_mass: torch.Tensor      # (n_links,)
+    link_com: torch.Tensor       # (n_links, 3) COM in link frame
+    link_inertia: torch.Tensor   # (n_links, 3, 3) inertia about COM in link frame
 
     def to(self, device):
         for name in ("parent", "joint_origin", "joint_axis", "joint_type",
-                     "q_index", "lower", "upper"):
+                     "q_index", "lower", "upper", "link_mass", "link_com",
+                     "link_inertia"):
             setattr(self, name, getattr(self, name).to(device))
         return self
 
@@ -48,6 +52,20 @@ def compile_robot(robot: Robot, dtype=torch.float32) -> CompiledChain:
     axis[:, 2] = 1.0
     jtype = torch.zeros(n, dtype=torch.long)
     q_index = torch.full((n,), -1, dtype=torch.long)
+
+    link_mass = torch.zeros(n, dtype=dtype)
+    link_com = torch.zeros(n, 3, dtype=dtype)
+    link_inertia = torch.zeros(n, 3, 3, dtype=dtype)
+    for name in names:
+        i = index[name]
+        inr = robot.links[name].inertial
+        if inr is None:
+            continue
+        link_mass[i] = inr.mass
+        link_com[i] = torch.tensor(inr.com, dtype=dtype)
+        ixx, iyy, izz, ixy, ixz, iyz = inr.inertia
+        link_inertia[i] = torch.tensor(
+            [[ixx, ixy, ixz], [ixy, iyy, iyz], [ixz, iyz, izz]], dtype=dtype)
 
     joint_by_child = {j.child: j for j in robot.joints}
     lowers, uppers = [], []
@@ -91,4 +109,5 @@ def compile_robot(robot: Robot, dtype=torch.float32) -> CompiledChain:
         q_index=q_index, topo_order=order,
         lower=torch.tensor(lowers, dtype=dtype),
         upper=torch.tensor(uppers, dtype=dtype),
+        link_mass=link_mass, link_com=link_com, link_inertia=link_inertia,
     )

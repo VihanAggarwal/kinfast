@@ -7,6 +7,7 @@ from kinfast.compile import compile_robot
 from kinfast.fk import forward_kinematics
 from kinfast.jacobian import jacobian as _jacobian
 from kinfast.ik import ik as _ik
+from kinfast import dynamics as _dyn
 
 
 class Robot:
@@ -65,9 +66,22 @@ class Robot:
 
     def ik(self, target, q0=None, link=None, **kw):
         idx = self.link_id(link) if link else self.link_id(self.ee_link)
-        if q0 is None:
+        if q0 is None and kw.get("restarts", 1) <= 1:
             q0 = self.random_configs(target.shape[0])
         return _ik(self.chain, target, q0, idx, **kw)
+
+    # ---- dynamics ----
+    def mass_matrix(self, q):
+        return _dyn.mass_matrix(self.chain, q)
+
+    def gravity(self, q):
+        return _dyn.gravity(self.chain, q)
+
+    def inverse_dynamics(self, q, qd, qdd, use_gravity=True):
+        return _dyn.inverse_dynamics(self.chain, q, qd, qdd, use_gravity=use_gravity)
+
+    def forward_dynamics(self, q, qd, tau, use_gravity=True):
+        return _dyn.forward_dynamics(self.chain, q, qd, tau, use_gravity=use_gravity)
 
 
 def load(path, ee_link=None):
