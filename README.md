@@ -1,6 +1,7 @@
 # kinfast
 
-**Load any robot. Run it 10,000x in parallel. Differentiable end to end. Five lines, no ROS.**
+**Load any robot. Run it 10,000x in parallel on GPU, or in microseconds one
+query at a time. Differentiable end to end. Five lines, no ROS.**
 
 ```python
 import kinfast
@@ -8,7 +9,7 @@ robot    = kinfast.load("panda.urdf")            # real robots load, unmodified
 q        = robot.random_configs(10_000)          # 10k configs in one batch
 ee       = robot.fk(q)                            # batched forward kinematics
 q_solved, info = robot.ik(ee, restarts=8)         # batched, differentiable IK
-tau      = robot.inverse_dynamics(q, qd, qdd)     # and the rest of the robot stack
+fast     = robot.compile()                        # microsecond scalar backend
 ```
 
 kinfast is a PyTorch robotics library that covers the whole robot program in one
@@ -62,6 +63,27 @@ fastest end-effector-only path:
 We are not claiming fastest kernels on earth (cuRobo's CUDA wins raw FLOPS).
 kinfast's bet is speed you can actually reach: competitive throughput on the
 robot you loaded in one line.
+
+## The compiler: C-like speed for control loops
+
+Batched math is only half of robotics. The other half is a control loop or a
+planner asking for ONE forward kinematics, right now, where framework overhead
+is 99% of the cost. `robot.compile()` removes the framework: at load time
+kinfast generates straight-line code specialized to your exact robot, with the
+kinematic tree unrolled, every constant folded, and every multiply-by-zero from
+axis-aligned joints eliminated at generation time. What remains is a few
+hundred fused multiply-adds:
+
+| op (real Panda, one query, CPU) | compiled | torch path | speedup |
+|---|---|---|---|
+| FK, all 13 link frames | 4-10 us | 350-550 us | 50-80x |
+| geometric Jacobian | 10-25 us | 740-900 us | 40-70x |
+
+That turns the FK+Jacobian tick of a controller from ~700 Hz (unusable) to
+roughly 30,000-70,000 Hz: a 1 kHz real-time loop spends under 2% of its budget
+on kinematics. The generated source is inspectable (`fast.source`), and its
+correctness is tested against the batched path (itself cross-validated against
+an independent library) on all 11 gallery robots.
 
 ## The whole robot program
 

@@ -83,6 +83,44 @@ def main():
         lines.append(f"| {B:,} | {fmt(t_ours_fk)} | {fmt(t_pk_fk)} | "
                      f"{fmt(t_ours_j)} | {fmt(t_pk_j)} |")
 
+    # ---- single-query latency: the kinfast compiler (scalar backend) ----
+    fast = robot.compile()
+    q1 = robot.random_configs(1)
+    ql = q1[0].tolist()
+
+    def bench_us(fn, n=3000):
+        for _ in range(50):
+            fn()
+        t0 = time.perf_counter()
+        for _ in range(n):
+            fn()
+        return (time.perf_counter() - t0) / n * 1e6
+
+    t_cg_fk = bench_us(lambda: fast._raw(ql))
+    t_cg_j = bench_us(lambda: fast.jacobian(ql, ee))
+    t_t_fk = bench_us(lambda: robot.fk_all(q1), n=500)
+    t_t_j = bench_us(lambda: robot.jacobian(q1), n=300)
+    q7_1 = q1[:, idx].to(dev)
+    t_pk_fk1 = bench_us(lambda: chain.forward_kinematics(q7_1, end_only=True), n=500)
+
+    lines += [
+        "",
+        "## Single-query latency (the compiler)",
+        "",
+        "`robot.compile()` generates straight-line code specialized to this robot",
+        "(tree unrolled, constants folded, axis zeros eliminated). One call, one",
+        "configuration, CPU:",
+        "",
+        "| op | kinfast compiled | kinfast torch | pytorch_kinematics |",
+        "|---|---|---|---|",
+        f"| FK (all links) | {t_cg_fk:.1f} us | {t_t_fk:.1f} us | {t_pk_fk1:.1f} us (ee only) |",
+        f"| Jacobian | {t_cg_j:.1f} us | {t_t_j:.1f} us | |",
+        "",
+        f"Control-loop math rate (FK+Jacobian per tick): "
+        f"**{1e6/(t_cg_fk+t_cg_j):,.0f} Hz** compiled vs "
+        f"{1e6/(t_t_fk+t_t_j):,.0f} Hz torch.",
+    ]
+
     text = "\n".join(lines) + "\n"
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(text)

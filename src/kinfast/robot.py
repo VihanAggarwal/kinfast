@@ -92,6 +92,14 @@ class Robot:
     def forward_dynamics(self, q, qd, tau, use_gravity=True):
         return _dyn.forward_dynamics(self.chain, q, qd, tau, use_gravity=use_gravity)
 
+    # ---- compiler ----
+    def compile(self):
+        """Generate robot-specific straight-line code for microsecond
+        single-query FK / Jacobian / IK (the scalar backend). Returns a
+        CompiledRobot; the batched torch path on this Robot is unaffected."""
+        from kinfast.codegen import CompiledRobot
+        return CompiledRobot(self.chain)
+
     # ---- frames ----
     def transform_points(self, points, q, from_link, to_link="world"):
         """Express points given in `from_link`'s frame in `to_link`'s frame
