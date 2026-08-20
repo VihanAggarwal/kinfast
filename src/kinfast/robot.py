@@ -83,6 +83,14 @@ class Robot:
     def forward_dynamics(self, q, qd, tau, use_gravity=True):
         return _dyn.forward_dynamics(self.chain, q, qd, tau, use_gravity=use_gravity)
 
+    # ---- collision ----
+    def sphere_model(self, spheres):
+        """Build a collision SphereModel. spheres: {link_name_or_index: [(x,y,z,r)]}."""
+        from kinfast.collision import SphereModel
+        resolved = {(self.link_id(k) if isinstance(k, str) else k): v
+                    for k, v in spheres.items()}
+        return SphereModel(self.chain, resolved)
+
 
 def load(path, ee_link=None):
     return Robot.from_ir(parse_urdf_file(path), ee_link=ee_link)
