@@ -38,6 +38,15 @@ class Robot:
         return self.chain.n_links
 
     @property
+    def joint_names(self):
+        """Movable joint names, ordered by their index in q."""
+        return list(self.chain.joint_names)
+
+    def q_index(self, joint_name):
+        """Index into q for a named joint."""
+        return self.chain.joint_names.index(joint_name)
+
+    @property
     def lower(self):
         return self.chain.lower
 
@@ -82,6 +91,24 @@ class Robot:
 
     def forward_dynamics(self, q, qd, tau, use_gravity=True):
         return _dyn.forward_dynamics(self.chain, q, qd, tau, use_gravity=use_gravity)
+
+    # ---- frames ----
+    def transform_points(self, points, q, from_link, to_link="world"):
+        """Express points given in `from_link`'s frame in `to_link`'s frame
+        (or the world frame). points: (N,3) shared across the batch or (B,N,3).
+        Returns (B,N,3)."""
+        from kinfast import transforms as _T
+        world = self.fk_all(q)                                  # (B,n,4,4)
+        B = world.shape[0]
+        if points.dim() == 2:
+            points = points.unsqueeze(0).expand(B, -1, -1)
+        ones = torch.ones(*points.shape[:-1], 1, dtype=points.dtype,
+                          device=points.device)
+        ph = torch.cat([points, ones], dim=-1)                  # (B,N,4)
+        M = world[:, self.link_id(from_link)]                   # (B,4,4)
+        if to_link != "world":
+            M = _T.invert_transform(world[:, self.link_id(to_link)]) @ M
+        return torch.einsum("bij,bnj->bni", M, ph)[..., :3]
 
     # ---- trajectory ----
     def point_to_point(self, q0, qf, amax=None, n=100):
