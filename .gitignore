@@ -5,4 +5,4 @@ __pycache__/
 build/
 dist/
 examples/assets/*.urdf
-demo.gif
+*.gif

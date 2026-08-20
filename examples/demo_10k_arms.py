@@ -9,12 +9,12 @@ import argparse, time, torch
 import kinfast
 
 
-def bench(robot, n, iters):
+def bench(robot, n, iters, restarts=1):
     q_true = robot.random_configs(n)
     target = robot.fk(q_true)
     torch.cuda.synchronize() if robot.device.type == "cuda" else None
     t0 = time.perf_counter()
-    q_sol, info = robot.ik(target, iters=iters, pos_only=True)
+    q_sol, info = robot.ik(target, iters=iters, pos_only=True, restarts=restarts)
     torch.cuda.synchronize() if robot.device.type == "cuda" else None
     dt = time.perf_counter() - t0
     pos_err = (robot.fk(q_sol)[:, :3, 3] - target[:, :3, 3]).norm(dim=-1)
@@ -48,16 +48,19 @@ def main():
     ap.add_argument("--urdf", required=True)
     ap.add_argument("--n", type=int, default=10000)
     ap.add_argument("--iters", type=int, default=100)
+    ap.add_argument("--restarts", type=int, default=1,
+                    help="random seeds per target; higher = better solve rate")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--gif", default="demo.gif")
     args = ap.parse_args()
 
     robot = kinfast.load(args.urdf).to(args.device)
     print(f"loaded {args.urdf}: dof={robot.dof}, device={args.device}")
-    dt, pos_err, q_sol = bench(robot, args.n, args.iters)
+    dt, pos_err, q_sol = bench(robot, args.n, args.iters, args.restarts)
     solved = (pos_err < 5e-2).float().mean().item()
-    print(f"solved {args.n:,} IK problems in {dt*1000:.1f} ms "
-          f"({args.n/dt:,.0f} solves/s), {solved*100:.1f}% within 5cm")
+    total = args.n * args.restarts
+    print(f"solved {args.n:,} IK problems ({total:,} seeds, restarts={args.restarts}) "
+          f"in {dt*1000:.1f} ms ({total/dt:,.0f} solves/s), {solved*100:.1f}% within 5cm")
     try:
         render_gif(robot, q_sol, args.gif)
     except Exception as e:
