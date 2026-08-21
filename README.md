@@ -1,5 +1,7 @@
 # kinfast
 
+[![tests](https://github.com/VihanAggarwal/kinfast/actions/workflows/tests.yml/badge.svg)](https://github.com/VihanAggarwal/kinfast/actions/workflows/tests.yml)
+
 Robot kinematics and dynamics in PyTorch. Loads real URDFs without ROS, runs
 thousands of configurations in one batch with gradients, and can compile a
 robot down to specialized code so a single FK call takes microseconds instead
