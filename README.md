@@ -28,10 +28,10 @@ real Franka Panda to float32 machine precision:
 
 ## Loads real robots, unmodified
 
-Eleven unmodified URDFs straight from public repos, spanning arms, quadrupeds,
-mobile bases, and classics. All eleven load; batched IK round-trips at 100% on
-every one (`python examples/gallery.py`, CPU, full table in
-`examples/assets/GALLERY.md`):
+Thirteen unmodified URDFs straight from public repos, spanning research arms,
+hobby arms, quadrupeds, mobile bases, and classics. All thirteen load; batched
+IK round-trips at 100% on every one (`python examples/gallery.py --fetch`, CPU,
+full table in `examples/assets/GALLERY.md`):
 
 | robot | dof | FK per config | IK round-trip (<5cm) |
 |---|---|---|---|
@@ -39,10 +39,16 @@ every one (`python examples/gallery.py`, CPU, full table in
 | KUKA iiwa | 7 | 4.8 us | 100% |
 | UR5 | 6 | 4.1 us | 100% |
 | xArm6 | 6 | 4.0 us | 100% |
+| SO-101 (the LeRobot arm) | 6 | 8.7 us | 100% |
+| SO-100 | 6 | 8.2 us | 100% |
 | Unitree A1 (quadruped) | 12 | 6.7 us | 100% |
 | Laikago (quadruped) | 12 | 5.1 us | 100% |
 | Minitaur (quadruped) | 16 | 9.4 us | 100% |
 | Husky, Racecar, R2D2, cartpole | ... | ... | 100% |
+
+Own an SO-101? There is a five-minute tutorial for exactly your arm:
+[docs/SO101_TUTORIAL.md](docs/SO101_TUTORIAL.md) (batched IK, a workspace map,
+and microsecond FK for your control loop).
 
 That includes URDFs other loaders choke on: Husky ships with unexpanded ROS
 `$(optenv ...)` substitution args, and kinfast expands them.

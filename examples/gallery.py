@@ -34,6 +34,10 @@ ROBOTS = {  # third-party URDFs, fetched not vendored; see source repos for lice
     "husky": f"{_BULLET}/husky/husky.urdf",
     "ur5": ("https://raw.githubusercontent.com/UM-ARM-Lab/pytorch_kinematics/"
             "master/tests/ur5.urdf"),
+    "so101": ("https://raw.githubusercontent.com/TheRobotStudio/SO-ARM100/main/"
+              "Simulation/SO101/so101_new_calib.urdf"),
+    "so100": ("https://raw.githubusercontent.com/TheRobotStudio/SO-ARM100/main/"
+              "Simulation/SO100/so100.urdf"),
 }
 
 
