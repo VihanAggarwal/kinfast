@@ -21,6 +21,7 @@ jobs:
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -e ".[dev]"
+          pip install mujoco pytorch-kinematics
       - name: fetch gallery robots
         run: python examples/gallery.py --fetch || true
       - name: pytest

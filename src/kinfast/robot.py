@@ -138,9 +138,21 @@ class Robot:
         return SphereModel(self.chain, resolved)
 
 
+def _sniff(text):
+    """URDF or MJCF? Decide by the XML root element, not the file extension."""
+    head = text.lstrip()[:200].lower()
+    if "<mujoco" in head:
+        return "mjcf"
+    return "urdf"
+
+
 def load(path, ee_link=None):
-    return Robot.from_ir(parse_urdf_file(path), ee_link=ee_link)
+    with open(path, "r", encoding="utf-8") as f:
+        return load_string(f.read(), ee_link=ee_link)
 
 
 def load_string(text, ee_link=None):
+    if _sniff(text) == "mjcf":
+        from kinfast.mjcf.parse import parse_mjcf_string
+        return Robot.from_ir(parse_mjcf_string(text), ee_link=ee_link)
     return Robot.from_ir(parse_urdf_string(text), ee_link=ee_link)

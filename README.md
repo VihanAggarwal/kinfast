@@ -10,7 +10,7 @@ of half a millisecond.
 ```python
 import kinfast
 
-robot = kinfast.load("panda.urdf")
+robot = kinfast.load("panda.urdf")        # URDF or MJCF, auto-detected
 q = robot.random_configs(10_000)
 ee = robot.fk(q)                          # (10000, 4, 4), differentiable
 q_sol, info = robot.ik(ee, restarts=8)    # batched damped least squares
@@ -41,11 +41,18 @@ the max position difference is 1.3e-7 m and max rotation difference 3.0e-7,
 which is float32 epsilon territory. The test is
 `tests/test_cross_validation.py` and runs in CI when the assets are present.
 
+MJCF gets the same treatment: every parsed MuJoCo model is compared against
+MuJoCo's own forward kinematics, body by body, at random configurations. The
+test models are chosen to hit the format's traps: angles are degrees by
+default, euler is intrinsic xyz (not URDF's extrinsic), quat is wxyz, joint
+`pos` is a rotation anchor with no URDF equivalent, and defaults classes
+inherit through the body tree.
+
 Other things the test suite checks against independent oracles rather than
 against the library itself: Jacobians vs float64 central differences (all six
 rows), dynamics via energy conservation in free fall, gravity torque vs the
 numerical gradient of potential energy, controllers by whether they actually
-track in closed loop, and manipulability against the textbook 2R result. 90
+track in closed loop, and manipulability against the textbook 2R result. 98
 tests total.
 
 ## Robots that load
@@ -141,6 +148,8 @@ target, because both FK and the distance field are differentiable.
 ## What it is not
 
 Not a physics simulator (use MuJoCo or Genesis), not a motion planner (use
-OMPL), and not hard real-time. MJCF support is not done yet. Mimic joints are
-treated as independent. Dynamics needs inertial tags in the URDF to be
-meaningful, like everything else that computes dynamics.
+OMPL), and not hard real-time. MJCF support covers bodies, joints (hinge and
+slide, including anchors and stacked joints), inertials, and defaults classes;
+ball and free joints are not (free bases load as fixed, with a note). Mimic
+joints are treated as independent. Dynamics needs inertial tags in the model
+to be meaningful, like everything else that computes dynamics.

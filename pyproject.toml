@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kinfast"
-version = "0.1.0"
+version = "0.2.0"
 description = "Batched differentiable robot kinematics and dynamics in PyTorch, with per-robot code generation for microsecond single-query FK. Loads real URDFs, no ROS."
 readme = "README.md"
 license = { file = "LICENSE" }
