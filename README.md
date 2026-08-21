@@ -1,39 +1,58 @@
 # kinfast
 
-**Load any robot. Run it 10,000x in parallel on GPU, or in microseconds one
-query at a time. Differentiable end to end. Five lines, no ROS.**
+Robot kinematics and dynamics in PyTorch. Loads real URDFs without ROS, runs
+thousands of configurations in one batch with gradients, and can compile a
+robot down to specialized code so a single FK call takes microseconds instead
+of half a millisecond.
 
 ```python
 import kinfast
-robot    = kinfast.load("panda.urdf")            # real robots load, unmodified
-q        = robot.random_configs(10_000)          # 10k configs in one batch
-ee       = robot.fk(q)                            # batched forward kinematics
-q_solved, info = robot.ik(ee, restarts=8)         # batched, differentiable IK
-fast     = robot.compile()                        # microsecond scalar backend
+
+robot = kinfast.load("panda.urdf")
+q = robot.random_configs(10_000)
+ee = robot.fk(q)                          # (10000, 4, 4), differentiable
+q_sol, info = robot.ik(ee, restarts=8)    # batched damped least squares
+fast = robot.compile()                    # scalar backend for control loops
 ```
 
-kinfast is a PyTorch robotics library that covers the whole robot program in one
-coherent, batched, differentiable stack: **ingestion, kinematics, dynamics,
-control, collision, trajectories, and workspace analysis.** Every claim below is
-reproduced by a script in this repo.
+The itch this scratches: the existing options are either fast but a fight to
+set up (cuRobo, Pinocchio) or simple but narrow. Getting an arbitrary URDF
+into any of them is the worst part of every robotics project I have worked on.
+So the loader is the point here. If a robot description file does not load,
+that is a bug, and I want the file.
 
-## Verified against the real world
+## Install
 
-Two independent codebases must agree. kinfast's forward kinematics matches
-[pytorch_kinematics](https://github.com/UM-ARM-Lab/pytorch_kinematics) on the
-real Franka Panda to float32 machine precision:
+```bash
+pip install -e ".[dev]"
+pytest tests
+```
 
-> **512 random configurations, real Panda URDF: max position difference 1.3e-7 m,
-> max rotation difference 3.0e-7.** (`tests/test_cross_validation.py`)
+Python 3.10+, PyTorch 2.x. No ROS anywhere in the dependency tree.
 
-## Loads real robots, unmodified
+## Accuracy
 
-Thirteen unmodified URDFs straight from public repos, spanning research arms,
-hobby arms, quadrupeds, mobile bases, and classics. All thirteen load; batched
-IK round-trips at 100% on every one (`python examples/gallery.py --fetch`, CPU,
-full table in `examples/assets/GALLERY.md`):
+FK is cross-checked against
+[pytorch_kinematics](https://github.com/UM-ARM-Lab/pytorch_kinematics), a
+separate codebase, on the real Franka Panda: over 512 random configurations
+the max position difference is 1.3e-7 m and max rotation difference 3.0e-7,
+which is float32 epsilon territory. The test is
+`tests/test_cross_validation.py` and runs in CI when the assets are present.
 
-| robot | dof | FK per config | IK round-trip (<5cm) |
+Other things the test suite checks against independent oracles rather than
+against the library itself: Jacobians vs float64 central differences (all six
+rows), dynamics via energy conservation in free fall, gravity torque vs the
+numerical gradient of potential energy, controllers by whether they actually
+track in closed loop, and manipulability against the textbook 2R result. 90
+tests total.
+
+## Robots that load
+
+Thirteen unmodified URDFs pulled straight from public repos. All of them load,
+and batched IK round-trips at 100% on each (`python examples/gallery.py
+--fetch`, results in `examples/assets/GALLERY.md`):
+
+| robot | dof | FK per config (CPU) | IK round trip, <5cm |
 |---|---|---|---|
 | Franka Panda | 9 | 5.5 us | 100% |
 | KUKA iiwa | 7 | 4.8 us | 100% |
@@ -41,115 +60,85 @@ full table in `examples/assets/GALLERY.md`):
 | xArm6 | 6 | 4.0 us | 100% |
 | SO-101 (the LeRobot arm) | 6 | 8.7 us | 100% |
 | SO-100 | 6 | 8.2 us | 100% |
-| Unitree A1 (quadruped) | 12 | 6.7 us | 100% |
-| Laikago (quadruped) | 12 | 5.1 us | 100% |
-| Minitaur (quadruped) | 16 | 9.4 us | 100% |
-| Husky, Racecar, R2D2, cartpole | ... | ... | 100% |
+| Unitree A1 | 12 | 6.7 us | 100% |
+| Laikago | 12 | 5.1 us | 100% |
+| Minitaur | 16 | 9.4 us | 100% |
+| Husky, Racecar, R2D2, cartpole | | | 100% |
 
-Own an SO-101? There is a five-minute tutorial for exactly your arm:
-[docs/SO101_TUTORIAL.md](docs/SO101_TUTORIAL.md) (batched IK, a workspace map,
-and microsecond FK for your control loop).
+Some of these are messier than they look. The Husky URDF ships with unexpanded
+ROS substitution args like `$(optenv HUSKY_IMU_XYZ 0.19 0 0.149)` in the middle
+of numeric fields; the parser expands those. Bad inertias, inverted joint
+limits, unnormalized axes, and missing limit tags get repaired at load with a
+record of what changed.
 
-That includes URDFs other loaders choke on: Husky ships with unexpanded ROS
-`$(optenv ...)` substitution args, and kinfast expands them.
+If you have an SO-101 there is a short walkthrough for exactly that arm in
+[docs/SO101_TUTORIAL.md](docs/SO101_TUTORIAL.md): batched IK, a reachability
+map, and a fast FK path for teleop loops.
 
-## Fast where it counts
+## Speed
 
-Honest benchmark on the real Panda, CPU, median of 7 runs
-(`python examples/benchmark.py`, table in `examples/assets/BENCHMARK.md`).
-kinfast computes all 13 link frames per FK call; pytorch_kinematics runs its
-fastest end-effector-only path:
+Two different regimes, two different answers.
 
-| batch | kinfast FK | pk FK | kinfast Jacobian | pk Jacobian |
+Batched (real Panda, CPU, median of 7, `python examples/benchmark.py`):
+
+| batch | kinfast FK | pytorch_kinematics FK | kinfast Jacobian | pk Jacobian |
 |---|---|---|---|---|
 | 1 | 0.43 ms | 0.48 ms | 0.86 ms | 0.54 ms |
 | 100 | 1.04 ms | 1.34 ms | 2.15 ms | 1.51 ms |
-| 10,000 | 15.49 ms | 12.90 ms | 28.01 ms | 22.61 ms |
+| 10,000 | 15.5 ms | 12.9 ms | 28.0 ms | 22.6 ms |
 
-We are not claiming fastest kernels on earth (cuRobo's CUDA wins raw FLOPS).
-kinfast's bet is speed you can actually reach: competitive throughput on the
-robot you loaded in one line.
+kinfast computes all 13 link frames per call; pk is measured on its fastest
+end-effector-only path. cuRobo's CUDA kernels beat both on raw throughput, so
+the claim here is competitive, not fastest.
 
-## The compiler: C-like speed for control loops
+Single query is where the interesting thing happens. A control loop asking for
+one FK pays ~400 us of framework overhead for ~200 flops of actual math, in
+any tensor library. `robot.compile()` gets rid of the framework: it generates
+straight-line code for your specific robot at load time, tree unrolled,
+constant origins folded in, every multiply by zero from an axis-aligned joint
+deleted during generation. Measured on the Panda:
 
-Batched math is only half of robotics. The other half is a control loop or a
-planner asking for ONE forward kinematics, right now, where framework overhead
-is 99% of the cost. `robot.compile()` removes the framework: at load time
-kinfast generates straight-line code specialized to your exact robot, with the
-kinematic tree unrolled, every constant folded, and every multiply-by-zero from
-axis-aligned joints eliminated at generation time. What remains is a few
-hundred fused multiply-adds:
+| op, one query, CPU | compiled | torch path |
+|---|---|---|
+| FK, all 13 frames | 4-10 us | 350-550 us |
+| geometric Jacobian | 10-25 us | 740-900 us |
 
-| op (real Panda, one query, CPU) | compiled | torch path | speedup |
-|---|---|---|---|
-| FK, all 13 link frames | 4-10 us | 350-550 us | 50-80x |
-| geometric Jacobian | 10-25 us | 740-900 us | 40-70x |
+That moves the FK+Jacobian tick of a controller from roughly 700 Hz to
+somewhere in the 30-70 kHz range, so a 1 kHz loop spends about 2% of its
+budget on kinematics. The generated source is a plain Python function you can
+read (`fast.source`), and it is tested against the batched path on all
+thirteen gallery robots. Per-robot codegen is not a new idea (Pinocchio has
+had CppADCodeGen paths for years); the version here just requires nothing
+beyond `pip install`.
 
-That turns the FK+Jacobian tick of a controller from ~700 Hz (unusable) to
-roughly 30,000-70,000 Hz: a 1 kHz real-time loop spends under 2% of its budget
-on kinematics. The generated source is inspectable (`fast.source`), and its
-correctness is tested against the batched path (itself cross-validated against
-an independent library) on all 11 gallery robots.
+Numbers above are from a laptop CPU. GPU benchmarks are next on the list.
 
-## The whole robot program
+## Everything else in the box
 
 ```python
-# dynamics: mass matrix, gravity, Coriolis, inverse/forward dynamics
-M   = robot.mass_matrix(q)
-tau = robot.inverse_dynamics(q, qd, qdd)
+tau = robot.inverse_dynamics(q, qd, qdd)       # also mass_matrix, gravity
+t, qt, qdt, qddt, T = robot.point_to_point(a, b)  # limit-safe trapezoid motion
 
-# control + simulation: gravity comp, PD, computed-torque, batched rollout
 from kinfast import control
-ts, qs, qds = control.simulate(robot.chain, q0, qd0, my_controller, dt=1e-3, steps=1000)
+ts, qs, qds = control.simulate(robot.chain, q0, qd0, controller, dt=1e-3, steps=1000)
 
-# collision: differentiable sphere distance, self and obstacles
 model = robot.sphere_model({"l3": [(0, 0, 0, 0.05)]})
-from kinfast.collision import collision_aware_ik   # reaches targets around obstacles
+from kinfast.collision import collision_aware_ik   # gradient-based obstacle avoidance
 
-# trajectories: quintic and time-optimal synchronized trapezoid under URDF limits
-t, q, qd, qdd, T = robot.point_to_point(q_start, q_goal)
-
-# analysis: manipulability, condition number, joint-limit margin, workspace
 from kinfast import analysis
-w = analysis.manipulability(robot.chain, q, robot.link_id("ee"))
-
-# frames: tf-style point transforms between any two links
-p_world = robot.transform_points(points_in_gripper, q, from_link="panda_hand")
+ws = analysis.workspace(robot.chain, robot.link_id(robot.ee_link))
 ```
 
-Collision-aware IK in one picture (`python examples/collision_aware_ik.py`):
-plain IK reaches through the obstacle; kinfast bends around it to the same
-target using gradients through FK and the distance field.
+The collision-aware IK demo is worth a look
+(`python examples/collision_aware_ik.py`): plain IK reaches straight through
+an obstacle, and the gradient version bends the arm around it to the same
+target, because both FK and the distance field are differentiable.
 
 ![collision-aware IK](examples/assets/collision_ik.png)
 
-## Why trust the math
+## What it is not
 
-- FK cross-validated against an independent library on a real robot (above).
-- Jacobians checked against float64 central differences, all 6 rows.
-- Dynamics validated by energy conservation in free fall and by gravity
-  matching the numerical gradient of potential energy.
-- Controllers validated in closed loop: computed-torque tracks a quintic swing
-  to <0.005 rad through the whole motion.
-- Manipulability checked against the textbook 2R result w = |sin q2|.
-- 73 tests, every module oracle-tested. `pytest tests` runs them all.
-
-## Install
-
-```bash
-git clone <this repo> && cd kinfast
-pip install -e ".[dev]"
-pytest tests                       # 73 passed
-python examples/gallery.py         # measure the gallery on your machine
-python examples/demo_10k_arms.py --urdf examples/assets/panda.urdf --restarts 4
-```
-
-Requires Python 3.10+ and PyTorch. No ROS anywhere.
-
-## Scope, honestly
-
-kinfast is for robot learning, research, and prototyping: batched and
-differentiable everything, easy ingestion, one coherent API. It is not a
-physics simulator (use MuJoCo or Genesis), not a motion planner (use OMPL), and
-not hard-real-time control. MJCF ingestion and GPU-tuned kernels are the next
-milestones; the design doc and parking lot in `docs/` lay out the road.
+Not a physics simulator (use MuJoCo or Genesis), not a motion planner (use
+OMPL), and not hard real-time. MJCF support is not done yet. Mimic joints are
+treated as independent. Dynamics needs inertial tags in the URDF to be
+meaningful, like everything else that computes dynamics.

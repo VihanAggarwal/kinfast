@@ -5,10 +5,21 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kinfast"
-version = "0.0.1"
-description = "Load any robot, then run it 10,000x in parallel on your GPU — differentiable, in five lines."
+version = "0.1.0"
+description = "Batched differentiable robot kinematics and dynamics in PyTorch, with per-robot code generation for microsecond single-query FK. Loads real URDFs, no ROS."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Vihan Aggarwal", email = "vihanaggarwal@gmail.com" }]
 requires-python = ">=3.10"
 dependencies = ["torch>=2.1", "numpy>=1.24"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Robotics",
+]
+
+[project.urls]
+Repository = "https://github.com/VihanAggarwal/kinfast"
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

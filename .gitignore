@@ -7,3 +7,6 @@ dist/
 examples/assets/*.urdf
 examples/assets/gallery/
 *.gif
+docs/superpowers/
+docs/LAUNCH.md
+PARKING.md
