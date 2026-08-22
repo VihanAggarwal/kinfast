@@ -110,13 +110,19 @@ Batched (real Panda, CPU, median of 7, `python examples/benchmark.py`):
 
 | batch | kinfast FK | pytorch_kinematics FK | kinfast Jacobian | pk Jacobian |
 |---|---|---|---|---|
-| 1 | 0.43 ms | 0.48 ms | 0.86 ms | 0.54 ms |
-| 100 | 1.04 ms | 1.34 ms | 2.15 ms | 1.51 ms |
-| 10,000 | 15.5 ms | 12.9 ms | 28.0 ms | 22.6 ms |
+| 1 | 0.50 ms | 0.38 ms | 0.72 ms | 0.47 ms |
+| 100 | 1.21 ms | 1.03 ms | 1.65 ms | 1.54 ms |
+| 10,000 | 17.2 ms | 12.2 ms | 19.1 ms | 15.2 ms |
 
-kinfast computes all 13 link frames per call; pk is measured on its fastest
-end-effector-only path. cuRobo's CUDA kernels beat both on raw throughput, so
-the claim here is competitive, not fastest.
+kinfast's public FK returns all 13 link frames as a (B, 13, 4, 4) tensor; pk
+is measured on its fastest end-effector-only path, and about a third of our
+10k time is just materializing that output tensor. The internal hot path that
+IK and Jacobians use skips the assembly and runs ~10 ms at batch 10k, under
+pk's ee-only time while carrying every link. That path is why batched IK is
+the strong suit: 10,000 position targets with 4 restarts each solve in ~7 s
+on a laptop CPU (~5,800 seed-solves/s), with FK evaluated once per iteration,
+not twice. cuRobo's CUDA kernels beat everything here on raw throughput, so
+the claim is competitive, not fastest.
 
 Single query is where the interesting thing happens. A control loop asking for
 one FK pays ~400 us of framework overhead for ~200 flops of actual math, in

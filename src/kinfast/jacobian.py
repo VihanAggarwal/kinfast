@@ -12,11 +12,17 @@ from kinfast.fk import forward_kinematics
 from kinfast.compile import CompiledChain
 
 
-def jacobian(chain: CompiledChain, q: torch.Tensor, link_index: int) -> torch.Tensor:
+def jacobian_rp(chain: CompiledChain, q: torch.Tensor, link_index: int,
+                rp=None) -> torch.Tensor:
+    """Geometric Jacobian computed from R/p lists (the fast path).
+    rp: (wR, wp) from fk_rp at the same q; computed here if absent."""
+    from kinfast.fk import fk_rp
     B = q.shape[0]
     device, dtype = q.device, q.dtype
-    world = forward_kinematics(chain, q)              # (B, n, 4, 4)
-    p_ee = world[:, link_index, :3, 3]                # (B, 3)
+    if rp is None:
+        rp = fk_rp(chain, q)
+    wR, wp = rp
+    p_ee = wp[link_index]                             # (B, 3)
     J = torch.zeros(B, 6, chain.dof, dtype=dtype, device=device)
     axes = chain.joint_axis.to(device)
 
@@ -25,13 +31,22 @@ def jacobian(chain: CompiledChain, q: torch.Tensor, link_index: int) -> torch.Te
         jt = int(chain.joint_type[i])
         if jt != 0:
             col = int(chain.q_index[i])
-            Ti = world[:, i]                          # (B, 4, 4)
-            axis_world = (Ti[:, :3, :3] @ axes[i]).to(dtype)   # (B, 3)
-            p_j = Ti[:, :3, 3]                        # (B, 3)
+            axis_world = (wR[i] @ axes[i]).to(dtype)  # (B, 3)
             if jt == 1:  # revolute
-                J[:, :3, col] = torch.cross(axis_world, p_ee - p_j, dim=-1)
+                J[:, :3, col] = torch.cross(axis_world, p_ee - wp[i], dim=-1)
                 J[:, 3:, col] = axis_world
             else:        # prismatic
                 J[:, :3, col] = axis_world
         i = int(chain.parent[i])
     return J
+
+
+def jacobian(chain: CompiledChain, q: torch.Tensor, link_index: int,
+             world: torch.Tensor = None) -> torch.Tensor:
+    """Pass `world` (from forward_kinematics at the same q) to avoid
+    recomputing FK; callers like IK evaluate both per iteration."""
+    if world is None:
+        return jacobian_rp(chain, q, link_index)
+    rp = ([world[:, i, :3, :3] for i in range(chain.n_links)],
+          [world[:, i, :3, 3] for i in range(chain.n_links)])
+    return jacobian_rp(chain, q, link_index, rp=rp)

@@ -10,8 +10,8 @@ restarts>1 to run K random seeds per target in ONE batch and keep the best — t
 turns the batching into far higher solve rates at near-zero extra code.
 """
 import torch
-from kinfast.fk import forward_kinematics
-from kinfast.jacobian import jacobian
+from kinfast.fk import forward_kinematics, fk_rp
+from kinfast.jacobian import jacobian, jacobian_rp
 from kinfast import transforms as T
 from kinfast.compile import CompiledChain
 
@@ -26,12 +26,19 @@ def _solve_from_seed(chain, target, q0, link_index, iters, damping, step,
     eye = torch.eye(m, dtype=dtype, device=device)
     lam2 = damping * damping
     final_err = torch.full((q.shape[0],), float("inf"), dtype=dtype, device=device)
+    tgt_p = target[:, :3, 3]
+    tgt_R = target[:, :3, :3]
     for _ in range(iters):
-        T_cur = forward_kinematics(chain, q)[:, link_index]
-        e = T.pose_error(T_cur, target)
+        # R/p fast path: no 4x4 assembly, FK computed once per iteration
+        rp = fk_rp(chain, q)
+        wR, wp = rp
+        p_err = tgt_p - wp[link_index]
         if pos_only:
-            e = e[:, :3]
-        J = jacobian(chain, q, link_index)
+            e = p_err
+        else:
+            w_err = T.so3_log(tgt_R @ wR[link_index].transpose(-1, -2))
+            e = torch.cat([p_err, w_err], dim=-1)
+        J = jacobian_rp(chain, q, link_index, rp=rp)
         if pos_only:
             J = J[:, :3, :]
         JT = J.transpose(-1, -2)

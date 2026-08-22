@@ -6,10 +6,10 @@ runs its fastest path (end_only). Reproduce: `python examples/benchmark.py`.
 
 | batch | kinfast FK | pk FK | kinfast Jacobian | pk Jacobian |
 |---|---|---|---|---|
-| 1 | 0.53 ms | 0.53 ms | 0.95 ms | 0.71 ms |
-| 100 | 0.95 ms | 2.21 ms | 3.81 ms | 1.41 ms |
-| 1,000 | 4.34 ms | 3.29 ms | 8.54 ms | 6.77 ms |
-| 10,000 | 15.58 ms | 12.86 ms | 30.13 ms | 18.96 ms |
+| 1 | 0.50 ms | 0.38 ms | 0.72 ms | 0.47 ms |
+| 100 | 1.21 ms | 1.03 ms | 1.65 ms | 1.54 ms |
+| 1,000 | 4.52 ms | 3.10 ms | 4.06 ms | 4.43 ms |
+| 10,000 | 17.20 ms | 12.22 ms | 19.06 ms | 15.17 ms |
 
 ## Single-query latency (the compiler)
 
@@ -19,7 +19,7 @@ configuration, CPU:
 
 | op | kinfast compiled | kinfast torch | pytorch_kinematics |
 |---|---|---|---|
-| FK (all links) | 9.8 us | 547.5 us | 656.7 us (ee only) |
-| Jacobian | 25.0 us | 898.0 us | |
+| FK (all links) | 10.1 us | 625.8 us | 472.6 us (ee only) |
+| Jacobian | 24.2 us | 702.5 us | |
 
-Control-loop math rate (FK+Jacobian per tick): **28,768 Hz** compiled vs 692 Hz torch.
+Control-loop math rate (FK+Jacobian per tick): **29,123 Hz** compiled vs 753 Hz torch.
