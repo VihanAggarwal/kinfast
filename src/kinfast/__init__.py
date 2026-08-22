@@ -11,5 +11,5 @@ def to_mjcf(path, out=None, **kw):
             f.write(text)
     return text
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = ["Robot", "load", "load_string", "to_mjcf", "__version__"]
