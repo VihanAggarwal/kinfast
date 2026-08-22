@@ -165,7 +165,11 @@ thirteen gallery robots. Per-robot codegen is not a new idea (Pinocchio has
 had CppADCodeGen paths for years); the version here just requires nothing
 beyond `pip install`.
 
-Numbers above are from a laptop CPU. GPU benchmarks are next on the list.
+Numbers above are from a laptop CPU. For CUDA, `python examples/gpu_benchmark.py`
+writes `examples/assets/BENCHMARK_GPU.md` with the same methodology (explicit
+synchronization, best of 10, batches grown until the card runs out of
+memory), and `pytest tests/test_gpu.py` checks that every module gives the
+same answers on the GPU as on the CPU.
 
 ## Everything else in the box
 

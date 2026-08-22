@@ -57,10 +57,11 @@ def workspace(chain, link_index, n: int = 10000, seed: int = 0, device="cpu"):
     quick 'can this arm reach my part?' MechE questions.
     """
     g = torch.Generator(device="cpu").manual_seed(seed)
-    lo, hi = chain.lower, chain.upper
-    q = lo + (hi - lo) * torch.rand(n, chain.dof, generator=g,
-                                    dtype=lo.dtype)
-    q = q.to(device)
+    lo, hi = chain.lower.cpu(), chain.upper.cpu()
+    # sample on the CPU generator (reproducible), then move to wherever the
+    # chain lives (a CUDA robot must not mix CPU randoms with device limits)
+    q = lo + (hi - lo) * torch.rand(n, chain.dof, generator=g, dtype=lo.dtype)
+    q = q.to(chain.lower.device if device == "cpu" else device)
     pts = forward_kinematics(chain, q)[:, link_index, :3, 3]
     r = pts.norm(dim=-1)
     return {

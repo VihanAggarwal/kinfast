@@ -17,7 +17,7 @@ from kinfast.compile import CompiledChain
 
 
 def _solve_from_seed(chain, target, q0, link_index, iters, damping, step,
-                     pos_only, tol):
+                     pos_only, tol, check_every=10):
     """Core DLS iteration from a given seed. Returns (q, final_error)."""
     device, dtype = q0.device, q0.dtype
     q = q0.clone()
@@ -28,7 +28,7 @@ def _solve_from_seed(chain, target, q0, link_index, iters, damping, step,
     final_err = torch.full((q.shape[0],), float("inf"), dtype=dtype, device=device)
     tgt_p = target[:, :3, 3]
     tgt_R = target[:, :3, :3]
-    for _ in range(iters):
+    for it in range(iters):
         # R/p fast path: no 4x4 assembly, FK computed once per iteration
         rp = fk_rp(chain, q)
         wR, wp = rp
@@ -46,7 +46,9 @@ def _solve_from_seed(chain, target, q0, link_index, iters, damping, step,
         dq = (JT @ torch.linalg.solve(H, e.unsqueeze(-1))).squeeze(-1)
         q = torch.clamp(q + step * dq, lo, hi)
         final_err = e.norm(dim=-1)
-        if bool((final_err < tol).all()):
+        # the convergence check is a host sync (a stall on GPU); do it every
+        # check_every iterations instead of every one
+        if (it + 1) % check_every == 0 and bool((final_err < tol).all()):
             break
     return q, final_err
 
@@ -54,7 +56,7 @@ def _solve_from_seed(chain, target, q0, link_index, iters, damping, step,
 def ik(chain: CompiledChain, target: torch.Tensor, q0: torch.Tensor = None,
        link_index: int = None, iters: int = 100, damping: float = 0.05,
        step: float = 1.0, pos_only: bool = False, tol: float = 1e-4,
-       restarts: int = 1):
+       restarts: int = 1, check_every: int = 10):
     """Batched IK. target (B,4,4) -> (q (B,dof), info).
 
     restarts>1 samples that many random seeds per target from the joint limits,
@@ -71,14 +73,14 @@ def ik(chain: CompiledChain, target: torch.Tensor, q0: torch.Tensor = None,
     if restarts <= 1:
         seed = q0.clone() if q0 is not None else _sample(B)
         q, err = _solve_from_seed(chain, target, seed, link_index, iters,
-                                  damping, step, pos_only, tol)
+                                  damping, step, pos_only, tol, check_every)
         return q, {"iters": iters, "final_error": err.detach()}
 
     # Multi-seed: tile targets, sample K seeds each, solve together, pick best.
     tgt = target.repeat_interleave(restarts, dim=0)            # (B*K, 4, 4)
     seeds = _sample(B * restarts)
     q_all, err_all = _solve_from_seed(chain, tgt, seeds, link_index, iters,
-                                      damping, step, pos_only, tol)
+                                      damping, step, pos_only, tol, check_every)
     err = err_all.view(B, restarts)                            # (B, K)
     best = err.argmin(dim=1)                                    # (B,)
     q_all = q_all.view(B, restarts, chain.dof)
