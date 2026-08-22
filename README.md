@@ -11,7 +11,7 @@ of half a millisecond.
 ```python
 import kinfast
 
-robot = kinfast.load("panda.urdf")        # URDF or MJCF, auto-detected
+robot = kinfast.load("panda.urdf")        # URDF, xacro, or MJCF, auto-detected
 q = robot.random_configs(10_000)
 ee = robot.fk(q)                          # (10000, 4, 4), differentiable
 q_sol, info = robot.ik(ee, restarts=8)    # batched damped least squares
@@ -38,7 +38,11 @@ pip install -e ".[dev]"
 pytest tests
 ```
 
-Python 3.10+, PyTorch 2.x. No ROS anywhere in the dependency tree.
+Python 3.10+, PyTorch 2.x. No ROS anywhere in the dependency tree. For
+`.xacro` robots, `pip install xacro` (the standalone expander, also ROS-free);
+`kinfast.load("arm.urdf.xacro", mappings={"prefix": "left_"})` takes the same
+property overrides as the xacro command line. `$(find pkg)` lookups need ROS
+package paths and are the one thing that will not resolve.
 
 ## Accuracy
 

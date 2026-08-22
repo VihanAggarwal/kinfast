@@ -24,6 +24,7 @@ Repository = "https://github.com/VihanAggarwal/kinfast"
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 demo = ["matplotlib>=3.7"]
+xacro = ["xacro"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

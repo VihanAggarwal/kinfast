@@ -146,9 +146,31 @@ def _sniff(text):
     return "urdf"
 
 
-def load(path, ee_link=None):
+def _is_xacro(path, text):
+    return path.lower().endswith(".xacro") or "xmlns:xacro" in text[:2000]
+
+
+def _expand_xacro(path, mappings=None):
+    """Expand a xacro file with the standalone `xacro` package (no ROS
+    needed). $(find pkg) lookups need ROS package paths and will fail here;
+    pass property overrides via `mappings` like the xacro CLI's name:=value."""
+    try:
+        import xacro
+    except ImportError as e:
+        raise ImportError("this robot is a xacro file; install the expander with "
+                          "`pip install xacro` (works without ROS)") from e
+    doc = xacro.process_file(path, mappings=mappings or {})
+    return doc.toprettyxml(indent="  ")
+
+
+def load(path, ee_link=None, mappings=None):
+    """Load a robot from URDF, xacro, or MJCF (format auto-detected).
+    `mappings` are xacro property overrides, e.g. {"prefix": "left_"}."""
     with open(path, "r", encoding="utf-8") as f:
-        return load_string(f.read(), ee_link=ee_link)
+        text = f.read()
+    if _is_xacro(path, text):
+        text = _expand_xacro(path, mappings)
+    return load_string(text, ee_link=ee_link)
 
 
 def load_string(text, ee_link=None):
