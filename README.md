@@ -66,12 +66,20 @@ full model directories were downloaded and FK verified against MuJoCo to 3e-7
 (`python examples/menagerie.py --fetch`, results in
 `examples/assets/MENAGERIE.md`).
 
+Dynamics is checked against a physics engine, not just against itself:
+kinfast's mass matrix and Coriolis-plus-gravity bias force are compared with
+MuJoCo's `mj_fullM` and `qfrc_bias` at random states, on a hand-built arm
+with rotated, off-center inertial frames and on the real UR5e from the
+Menagerie. (That test is also why both parsers now rotate inertia tensors out
+of their inertial frames, and why the repair pass flags inertias that violate
+the triangle inequality, which MuJoCo refuses to load.)
+
 Other things the test suite checks against independent oracles rather than
 against the library itself: Jacobians vs float64 central differences (all six
-rows), dynamics via energy conservation in free fall, gravity torque vs the
-numerical gradient of potential energy, controllers by whether they actually
-track in closed loop, and manipulability against the textbook 2R result. 98
-tests total.
+rows), energy conservation in free fall, gravity torque vs the numerical
+gradient of potential energy, controllers by whether they actually track in
+closed loop, and manipulability against the textbook 2R result. 124 tests
+total.
 
 ## Robots that load
 

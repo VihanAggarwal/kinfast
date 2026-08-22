@@ -129,7 +129,7 @@ def _body_orient_rpy(el, ctx):
     return (0.0, 0.0, 0.0)
 
 
-def _parse_inertial(el):
+def _parse_inertial(el, ctx):
     if el is None:
         return None
     mass = float(el.get("mass", 0.0))
@@ -141,6 +141,11 @@ def _parse_inertial(el):
         i = (d[0], d[1], d[2], 0.0, 0.0, 0.0)
     else:
         i = (0.0,) * 6
+    # the inertial frame may be rotated (quat/euler): express I in the body frame
+    if el.get("quat") or el.get("euler") or el.get("axisangle"):
+        from kinfast.urdf.parse import rotate_inertia
+        R = _euler_to_mat(_body_orient_rpy(el, ctx), "XYZ")
+        i = rotate_inertia(i, R)
     return Inertial(mass, com, i)
 
 
@@ -232,7 +237,7 @@ def parse_mjcf_string(text: str) -> Robot:
                 jrpy = (0.0, 0.0, 0.0)
             robot.joints.append(Joint(unique(f"{name}_fix"), "fixed",
                                       cur_parent, name, xyz, jrpy))
-        robot.links[name].inertial = _parse_inertial(body_el.find("inertial"))
+        robot.links[name].inertial = _parse_inertial(body_el.find("inertial"), ctx)
 
         for sub in body_el.findall("body"):
             walk(sub, name, childclass, counter)

@@ -25,7 +25,35 @@ def repair(robot: Robot):
         if j.type in MOVABLE:
             _fix_axis(j, findings)
             _fix_limits(j, findings)
+    for link in robot.links.values():
+        _check_inertia(link, findings)
     return robot, findings
+
+
+def _check_inertia(link, findings):
+    """A real rigid body's principal inertias satisfy the triangle inequality
+    (A + B >= C for every permutation); MuJoCo refuses models that violate it.
+    Detect-only: fixing it means changing the physics, which is the user's call."""
+    inr = link.inertial
+    if inr is None or inr.mass <= 0.0:
+        return
+    ixx, iyy, izz, ixy, ixz, iyz = inr.inertia
+    if ixx == iyy == izz == 0.0:
+        return
+    # principal moments via eigenvalues of the (symmetric) tensor
+    I = [[ixx, ixy, ixz], [ixy, iyy, iyz], [ixz, iyz, izz]]
+    try:
+        import numpy as np
+        a, b, c = sorted(np.linalg.eigvalsh(np.array(I)).tolist())
+    except Exception:
+        return
+    if a < -1e-12:
+        findings.append(Finding("negative_inertia", link.name,
+                                f"principal inertia {a:.3g} < 0 (not physical)"))
+    elif a + b < c * (1 - 1e-6):
+        findings.append(Finding("inertia_triangle", link.name,
+                                f"principal inertias {a:.3g}+{b:.3g} < {c:.3g}: "
+                                "violates the triangle inequality (MuJoCo will reject this)"))
 
 
 def _fix_axis(j, findings):

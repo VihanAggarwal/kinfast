@@ -4,10 +4,30 @@
 Robustness is the moat: unknown tags are ignored, missing optional fields get
 sane defaults, and malformed numbers raise a clear error naming the joint/link.
 """
+import math
 import os
 import re
 import xml.etree.ElementTree as ET
 from kinfast.ir import Robot, Link, Joint, Inertial, Geometry
+
+
+def _rpy_to_mat(r, p, y):
+    """URDF rpy (extrinsic xyz): R = Rz(y) @ Ry(p) @ Rx(r)."""
+    cr, sr, cp, sp, cy, sy = (math.cos(r), math.sin(r), math.cos(p),
+                              math.sin(p), math.cos(y), math.sin(y))
+    return [[cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+            [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+            [-sp, cp * sr, cp * cr]]
+
+
+def rotate_inertia(i6, R):
+    """Express an inertia tensor given in a rotated frame in the link frame:
+    I_link = R @ I @ R^T. i6 = (ixx, iyy, izz, ixy, ixz, iyz)."""
+    ixx, iyy, izz, ixy, ixz, iyz = i6
+    I = [[ixx, ixy, ixz], [ixy, iyy, iyz], [ixz, iyz, izz]]
+    RI = [[sum(R[a][k] * I[k][b] for k in range(3)) for b in range(3)] for a in range(3)]
+    J = [[sum(RI[a][k] * R[b][k] for k in range(3)) for b in range(3)] for a in range(3)]
+    return (J[0][0], J[1][1], J[2][2], J[0][1], J[0][2], J[1][2])
 
 # ROS substitution args that leak into published URDFs (e.g. Husky's
 # "$(optenv HUSKY_IMU_XYZ 0.19 0 0.149)"). Real files ship like this, so we
@@ -53,6 +73,10 @@ def _parse_link(el) -> Link:
                             for k in ("ixx", "iyy", "izz", "ixy", "ixz", "iyz"))
         else:
             inertia = (0.0,) * 6
+        if origin is not None and origin.get("rpy"):
+            rpy = _floats(origin.get("rpy"), 3, f"link {link.name} inertial origin")
+            if any(abs(a) > 1e-12 for a in rpy):
+                inertia = rotate_inertia(inertia, _rpy_to_mat(*rpy))
         link.inertial = Inertial(mass, com, inertia)
     return link
 
