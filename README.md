@@ -1,6 +1,7 @@
 # kinfast
 
 [![tests](https://github.com/VihanAggarwal/kinfast/actions/workflows/tests.yml/badge.svg)](https://github.com/VihanAggarwal/kinfast/actions/workflows/tests.yml)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/VihanAggarwal/kinfast/blob/main/examples/kinfast_quickstart.ipynb)
 
 Robot kinematics and dynamics in PyTorch. Loads real URDFs without ROS, runs
 thousands of configurations in one batch with gradients, and can compile a
@@ -22,6 +23,13 @@ set up (cuRobo, Pinocchio) or simple but narrow. Getting an arbitrary URDF
 into any of them is the worst part of every robotics project I have worked on.
 So the loader is the point here. If a robot description file does not load,
 that is a bug, and I want the file.
+
+## Try it without installing anything
+
+The [quickstart notebook](examples/kinfast_quickstart.ipynb) runs in Colab:
+load the Panda, solve 10,000 IK problems in a batch, compile it to microsecond
+FK, and load an MJCF arm from the Menagerie. On a free T4 runtime the batched
+numbers are the fun ones.
 
 ## Install
 
@@ -47,6 +55,16 @@ test models are chosen to hit the format's traps: angles are degrees by
 default, euler is intrinsic xyz (not URDF's extrinsic), quat is wxyz, joint
 `pos` is a rotation anchor with no URDF equivalent, and defaults classes
 inherit through the body tree.
+
+It also holds up at scale. 19 of 20 production models from the
+[MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie) parse
+(Panda, UR5e/UR10e, iiwa 14, Kinova Gen3, xArm7, Sawyer, Go2, the 29-dof
+Unitree G1 humanoid, ANYmal C, Spot, the 24-dof Shadow Hand, SO-ARM100, ALOHA,
+Stretch, and more); the one failure is Cassie, whose ball joints are a
+documented non-feature that raises a clear error. For UR5e and SO-ARM100 the
+full model directories were downloaded and FK verified against MuJoCo to 3e-7
+(`python examples/menagerie.py --fetch`, results in
+`examples/assets/MENAGERIE.md`).
 
 Other things the test suite checks against independent oracles rather than
 against the library itself: Jacobians vs float64 central differences (all six
