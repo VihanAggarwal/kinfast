@@ -16,6 +16,9 @@ class Geometry:
     kind: str = "none"          # "mesh" | "box" | "cylinder" | "sphere" | "none"
     mesh_path: Optional[str] = None
     scale: tuple = (1.0, 1.0, 1.0)
+    size: tuple = ()            # box: (x,y,z) full extents; cylinder: (radius, length); sphere: (radius,)
+    origin_xyz: tuple = (0.0, 0.0, 0.0)
+    origin_rpy: tuple = (0.0, 0.0, 0.0)
 
 
 @dataclass

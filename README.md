@@ -16,6 +16,7 @@ q = robot.random_configs(10_000)
 ee = robot.fk(q)                          # (10000, 4, 4), differentiable
 q_sol, info = robot.ik(ee, restarts=8)    # batched damped least squares
 fast = robot.compile()                    # scalar backend for control loops
+kinfast.to_mjcf("panda.urdf", out="panda.xml")   # URDF -> MuJoCo, verified
 ```
 
 The itch this scratches: the existing options are either fast but a fight to
@@ -70,6 +71,14 @@ full model directories were downloaded and FK verified against MuJoCo to 3e-7
 (`python examples/menagerie.py --fetch`, results in
 `examples/assets/MENAGERIE.md`).
 
+The URDF to MJCF converter (`kinfast.to_mjcf`, or `robot.to_mjcf()`) is
+verified the same way in reverse: the emitted MuJoCo model is loaded by
+MuJoCo and its forward kinematics compared against kinfast's FK of the source
+URDF, on a primitives-and-inertials arm and on the real Panda. It carries
+joints with limits, inertials, and box/cylinder/sphere/mesh geometry (with
+MJCF's half-extent conventions); bodies with no inertial get a placeholder
+mass so MuJoCo will load them, and the placeholder is marked in the output.
+
 Dynamics is checked against a physics engine, not just against itself:
 kinfast's mass matrix and Coriolis-plus-gravity bias force are compared with
 MuJoCo's `mj_fullM` and `qfrc_bias` at random states, on a hand-built arm
@@ -82,7 +91,7 @@ Other things the test suite checks against independent oracles rather than
 against the library itself: Jacobians vs float64 central differences (all six
 rows), energy conservation in free fall, gravity torque vs the numerical
 gradient of potential energy, controllers by whether they actually track in
-closed loop, and manipulability against the textbook 2R result. 124 tests
+closed loop, and manipulability against the textbook 2R result. 130 tests
 total.
 
 ## Robots that load

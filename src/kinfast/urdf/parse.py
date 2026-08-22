@@ -87,14 +87,29 @@ def _parse_geometry(parent):
     geo = parent.find("geometry")
     if geo is None:
         return None
+    origin = parent.find("origin")
+    oxyz = (_floats(origin.get("xyz", "0 0 0"), 3, "geometry origin")
+            if origin is not None else (0.0, 0.0, 0.0))
+    orpy = (_floats(origin.get("rpy", "0 0 0"), 3, "geometry origin")
+            if origin is not None else (0.0, 0.0, 0.0))
     mesh = geo.find("mesh")
     if mesh is not None:
-        scale = _floats(mesh.get("scale"), 3, "mesh scale") if mesh.get("scale") \
-            else (1.0, 1.0, 1.0)
-        return Geometry("mesh", mesh.get("filename"), scale)
-    for kind in ("box", "cylinder", "sphere"):
-        if geo.find(kind) is not None:
-            return Geometry(kind)
+        scale = (_floats(mesh.get("scale"), 3, "mesh scale") if mesh.get("scale")
+                 else (1.0, 1.0, 1.0))
+        return Geometry("mesh", mesh.get("filename"), scale, (), oxyz, orpy)
+    box = geo.find("box")
+    if box is not None:
+        return Geometry("box", None, (1.0, 1.0, 1.0),
+                        _floats(box.get("size", "0 0 0"), 3, "box size"), oxyz, orpy)
+    cyl = geo.find("cylinder")
+    if cyl is not None:
+        return Geometry("cylinder", None, (1.0, 1.0, 1.0),
+                        (float(cyl.get("radius", 0.0)), float(cyl.get("length", 0.0))),
+                        oxyz, orpy)
+    sph = geo.find("sphere")
+    if sph is not None:
+        return Geometry("sphere", None, (1.0, 1.0, 1.0),
+                        (float(sph.get("radius", 0.0)),), oxyz, orpy)
     return None
 
 

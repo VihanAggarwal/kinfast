@@ -11,8 +11,9 @@ from kinfast import dynamics as _dyn
 
 
 class Robot:
-    def __init__(self, chain, ee_link=None):
+    def __init__(self, chain, ee_link=None, ir=None):
         self.chain = chain
+        self.ir = ir                      # the parsed model, kept for export
         self.device = torch.device("cpu")
         self.ee_link = ee_link or chain.link_names[-1]
 
@@ -21,7 +22,7 @@ class Robot:
     def from_ir(cls, robot_ir, repair_model=True, ee_link=None):
         if repair_model:
             robot_ir, _ = repair(robot_ir)
-        return cls(compile_robot(robot_ir), ee_link=ee_link)
+        return cls(compile_robot(robot_ir), ee_link=ee_link, ir=robot_ir)
 
     def to(self, device):
         self.device = torch.device(device)
@@ -91,6 +92,16 @@ class Robot:
 
     def forward_dynamics(self, q, qd, tau, use_gravity=True):
         return _dyn.forward_dynamics(self.chain, q, qd, tau, use_gravity=use_gravity)
+
+    # ---- export ----
+    def to_mjcf(self, geometry=True, meshdir="", meshdir_strip=""):
+        """Export this robot as an MJCF string (URDF -> MuJoCo). See
+        kinfast.mjcf.emit for what is reproduced and how it is verified."""
+        from kinfast.mjcf.emit import emit_mjcf
+        if self.ir is None:
+            raise ValueError("this Robot was built without its IR; load it with kinfast.load")
+        return emit_mjcf(self.ir, geometry=geometry, meshdir=meshdir,
+                         meshdir_strip=meshdir_strip)
 
     # ---- compiler ----
     def compile(self):
