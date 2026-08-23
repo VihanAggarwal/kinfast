@@ -54,7 +54,8 @@ class Robot:
     # World gravity vector in m/s^2. URDF has no way to express it, so it keeps
     # the default; MJCF `<option gravity="...">` overrides it.
     gravity: tuple = (0.0, 0.0, -9.81)
-    # Human-readable remarks from the parser (things dropped or approximated).
+    # Human-readable notes from the parser about anything it had to reinterpret,
+    # e.g. an MJCF free joint that kinfast pins to the world. Always a list.
     parse_notes: list = field(default_factory=list)
 
     def root_link(self) -> str:

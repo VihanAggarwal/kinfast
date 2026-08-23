@@ -2,7 +2,7 @@
 """Batched, differentiable sphere-based collision distance.
 
 Each link carries a set of bounding spheres (center in the link frame + radius).
-Spheres are cheap, GPU-batch-friendly, and differentiable — the same
+Spheres are cheap, GPU-batch-friendly, and differentiable, the same
 approximation cuRobo uses. Signed distance between two spheres is
 ||c_i - c_j|| - r_i - r_j  (negative = penetrating), which flows gradients for
 collision-avoidance IK / trajectory optimization.
@@ -105,7 +105,7 @@ def collision_aware_ik(model: SphereModel, target_pos: torch.Tensor,
     of the distance field (grad ||c_i - c_j|| = 0 at coincidence), and would never
     move without it.
 
-    Like plain IK, this landscape has local minima — run a batch of seeds and take
+    Like plain IK, this landscape has local minima, so run a batch of seeds and take
     the best by `info["pos_error"]`/`info["clearance"]`. Returns (q (B,dof), info).
     """
     chain = model.chain

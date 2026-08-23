@@ -5,7 +5,7 @@ Usage:
   python examples/demo_10k_arms.py --urdf examples/assets/panda.urdf --n 10000
 Prints throughput; writes demo.gif of a representative subset (needs matplotlib).
 """
-import argparse, time, torch
+import argparse, time, traceback, torch
 import kinfast
 
 
@@ -22,6 +22,17 @@ def bench(robot, n, iters, restarts=1):
 
 
 def render_gif(robot, q_sol, path, k=48):
+    """Animate the first k solutions, one arm added per frame.
+
+    k is clamped to the batch size, so a small --n renders a short gif instead
+    of running off the end of the batch.
+    """
+    n = int(q_sol.shape[0])
+    if n == 0:
+        raise ValueError("nothing to render: the solution batch is empty")
+    if int(k) < 1:
+        raise ValueError(f"k must be at least 1, got {k}")
+    k = min(int(k), n)
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -34,7 +45,7 @@ def render_gif(robot, q_sol, path, k=48):
 
     def draw(f):
         ax.clear(); ax.set_aspect("equal"); ax.axis("off")
-        ax.set_title(f"{q_sol.shape[0]:,} arms solved — showing {f+1}/{k}")
+        ax.set_title(f"{n:,} arms solved, showing {f+1}/{k}")
         for j in range(f + 1):
             ax.plot(xs[j], ys[j], "-o", lw=1, ms=2, alpha=0.6)
 
@@ -63,8 +74,11 @@ def main():
           f"in {dt*1000:.1f} ms ({total/dt:,.0f} solves/s), {solved*100:.1f}% within 5cm")
     try:
         render_gif(robot, q_sol, args.gif)
-    except Exception as e:
-        print(f"(gif skipped: {e})")
+    except ImportError as e:
+        print(f"gif skipped: rendering needs matplotlib and pillow ({e})")
+    except Exception:
+        print(f"gif skipped: rendering {args.gif} failed, traceback follows")
+        traceback.print_exc()
 
 
 if __name__ == "__main__":

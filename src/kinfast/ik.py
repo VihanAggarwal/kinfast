@@ -6,8 +6,8 @@ Differentiable: the whole loop is autograd-traceable. Set pos_only=True to solve
 position only (3D error), the robust default for the demo.
 
 Single-seed DLS gets stuck in local minima for redundant/spatial arms. Pass
-restarts>1 to run K random seeds per target in ONE batch and keep the best — this
-turns the batching into far higher solve rates at near-zero extra code.
+restarts>1 to run K random seeds per target in ONE batch and keep the best.
+Batching makes the extra seeds nearly free, and solve rates go up a lot.
 """
 import torch
 from kinfast.fk import forward_kinematics, fk_rp

@@ -3,7 +3,7 @@
 
 A 6-DOF arm must reach a target, but an obstacle sits exactly where its elbow
 wants to be. Plain IK punches through the obstacle; collision-aware IK exploits
-the arm's redundancy to bend around it — same target, collision-free.
+the arm's redundancy to bend around it: same target, collision-free.
 
 Usage:  python examples/collision_aware_ik.py [--out collision_ik.png]
 Everything runs on CPU in a few seconds; no assets needed (the robot is inline).

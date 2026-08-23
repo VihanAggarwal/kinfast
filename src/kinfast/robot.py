@@ -107,6 +107,13 @@ class Robot:
         return self.chain.n_links
 
     @property
+    def parse_notes(self):
+        """Notes the parser recorded about anything it had to reinterpret, such
+        as an MJCF free joint pinned to the world. The notes live on the IR, so
+        this forwards to `self.ir`; empty when there is no IR to ask."""
+        return list(getattr(self.ir, "parse_notes", None) or [])
+
+    @property
     def joint_names(self):
         """Movable joint names, ordered by their index in q."""
         return list(self.chain.joint_names)

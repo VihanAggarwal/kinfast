@@ -4,7 +4,7 @@
 Two workhorse profiles, both returning sampled (q, qd, qdd) tensors:
 
   quintic      minimum-jerk-style smooth motion with zero boundary velocity and
-               acceleration — the default for "move nicely from A to B".
+               acceleration, the default for "move nicely from A to B".
   trapezoidal  time-optimal under per-joint velocity/acceleration limits, with
                all joints synchronized to finish together (the slowest joint sets
                the duration; faster joints lower their peak velocity to match).

@@ -97,11 +97,15 @@ def fetch():
 
 
 def parse_tier(path):
+    """Load a model and return it with whatever the parser had to reinterpret.
+
+    The notes are recorded on the IR by the MJCF parser, so read them through
+    the loaded robot's parse_notes, which forwards to robot.ir.
+    """
     import kinfast
     robot = kinfast.load(path)
-    notes = getattr(robot, "parse_notes", None) or []
-    ir_notes = "; ".join(notes) if notes else ""
-    return robot, ir_notes
+    notes = list(robot.parse_notes)
+    return robot, "; ".join(notes)
 
 
 def oracle_tier(model_dir, xml):
