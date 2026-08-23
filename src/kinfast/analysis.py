@@ -15,6 +15,37 @@ from kinfast.fk import forward_kinematics
 from kinfast.jacobian import jacobian
 
 
+def _check_rows(rows):
+    """Validate a `rows` selection for the 6-row Jacobian and return it as a
+    list of non-negative ints.
+
+    An empty selection is rejected outright: J would be (B, 0, dof), and
+    torch.linalg.det of a 0x0 matrix is 1 by convention, so the caller would
+    silently get manipulability 1.0 everywhere instead of an error. Repeated
+    rows make J J^T rank deficient, which would report 0 (singular) at every
+    configuration, so those are rejected too.
+    """
+    try:
+        rows = [int(r) for r in rows]
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"rows must be an iterable of Jacobian row indices 0..5, got {rows!r}")
+    if not rows:
+        raise ValueError(
+            "rows must be a non-empty selection of Jacobian rows 0..5 "
+            "(an empty selection has no task space)")
+    bad = [r for r in rows if not -6 <= r < 6]
+    if bad:
+        raise ValueError(
+            f"rows must be a selection of Jacobian rows 0..5, got {rows} "
+            f"(out of range: {bad})")
+    rows = [r % 6 for r in rows]
+    if len(set(rows)) != len(rows):
+        raise ValueError(
+            f"rows must not repeat a Jacobian row, got {rows}")
+    return rows
+
+
 def manipulability(chain, q, link_index, translational: bool = True,
                    rows=None):
     """Yoshikawa manipulability w = sqrt(det(J J^T)). (B,). 0 = singular.
@@ -24,9 +55,11 @@ def manipulability(chain, q, link_index, translational: bool = True,
     zero out-of-plane row, making det(JJ^T) = 0 at every configuration. Pass
     `rows` to select the task rows explicitly (e.g. rows=(0, 1) for an xy-planar
     arm). Default: the 3 linear rows (translational=True) or all 6."""
+    if rows is not None:
+        rows = _check_rows(rows)
     J = jacobian(chain, q, link_index)
     if rows is not None:
-        J = J[:, list(rows), :]
+        J = J[:, rows, :]
     elif translational:
         J = J[:, :3, :]
     JJt = J @ J.transpose(-1, -2)

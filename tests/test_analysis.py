@@ -40,6 +40,29 @@ def test_manipulability_matches_textbook():
         assert abs(w.item() - expect) < 1e-7, f"q2={q2}"
 
 
+def test_manipulability_rows_validation():
+    """Regression: rows=() used to return 1.0 for every configuration because
+    det of a 0x0 matrix is 1. Bad selections must raise a ValueError that
+    names `rows`; valid ones (including negative indices and tensors) must
+    match the hand-computed planar value |sin(q2)|."""
+    import pytest
+    chain = _p2r()
+    li = chain.link_index["ee"]
+    q = torch.tensor([[0.4, math.pi / 6]], dtype=torch.float64)
+    for bad in [(), (0, 7), (0, 6), (-7, 0), [0, 1, 0], (0, -6)]:
+        with pytest.raises(ValueError, match="rows"):
+            A.manipulability(chain, q, li, rows=bad)
+    # valid spellings of the xy selection all agree with the textbook value
+    for ok in [(0, 1), [1, 0], torch.tensor([0, 1]), (-6, -5)]:
+        w = A.manipulability(chain, q, li, rows=ok)
+        assert abs(w.item() - 0.5) < 1e-7, f"rows={ok!r}"
+    # a single row is a legitimate 1-d task: w = ||J_row||
+    from kinfast.jacobian import jacobian
+    J = jacobian(chain, q, li)
+    w1 = A.manipulability(chain, q, li, rows=(1,))
+    assert abs(w1.item() - J[0, 1].norm().item()) < 1e-12
+
+
 def test_condition_number_blows_up_at_singularity():
     chain = _p2r()
     li = chain.link_index["ee"]
