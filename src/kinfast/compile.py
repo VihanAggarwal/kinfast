@@ -33,11 +33,12 @@ class CompiledChain:
     link_mass: torch.Tensor      # (n_links,)
     link_com: torch.Tensor       # (n_links, 3) COM in link frame
     link_inertia: torch.Tensor   # (n_links, 3, 3) inertia about COM in link frame
-    # Bumped on a device move or an explicit invalidate_cache(). FK folds the
-    # constants above into per-(device, dtype) derived tensors and keys that
-    # cache on this counter plus each source tensor's storage and in-place
-    # version, so a stale cache cannot outlive an edit. Treat the tensors as
-    # immutable anyway; the fold is not free.
+    gravity: tuple = (0.0, 0.0, -9.81)   # world gravity vector, m/s^2
+    # Bumped on a device move, a dtype recompile, or an explicit
+    # invalidate_cache(). FK folds the constants above into per-(device, dtype)
+    # derived tensors and keys that cache on this counter plus each source
+    # tensor's storage and in-place version, so a stale cache cannot outlive an
+    # edit. Treat the tensors as immutable anyway; the fold is not free.
     _version: int = 0
 
     # tensors that carry the model's real numbers, and the ones that are
@@ -157,4 +158,6 @@ def compile_robot(robot: Robot, dtype=torch.float32) -> CompiledChain:
         vmax=torch.tensor(vels, dtype=dtype),
         joint_names=jnames,
         link_mass=link_mass, link_com=link_com, link_inertia=link_inertia,
+        gravity=tuple(float(c) for c in getattr(robot, "gravity",
+                                                (0.0, 0.0, -9.81))),
     )

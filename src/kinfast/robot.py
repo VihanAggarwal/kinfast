@@ -106,6 +106,13 @@ class Robot:
     def link_id(self, name):
         return self.chain.link_index[name]
 
+    @property
+    def parse_notes(self):
+        """What the parser approximated or dropped: free joints treated as
+        fixed, bodies left at zero mass, settotalmass scaling. Empty list for
+        a model that needed none."""
+        return list(getattr(self.ir, "parse_notes", None) or [])
+
     # ---- kinematics ----
     def random_configs(self, n, dtype=None):
         """Uniform random configurations inside the joint limits, (n, dof).
@@ -141,8 +148,10 @@ class Robot:
     def mass_matrix(self, q):
         return _dyn.mass_matrix(self.chain, q)
 
-    def gravity(self, q):
-        return _dyn.gravity(self.chain, q)
+    def gravity(self, q, g=None):
+        """Generalized gravity torque. g defaults to the model's own gravity
+        vector (MJCF `<option gravity>`, else (0, 0, -9.81))."""
+        return _dyn.gravity(self.chain, q, g)
 
     def inverse_dynamics(self, q, qd, qdd, use_gravity=True):
         return _dyn.inverse_dynamics(self.chain, q, qd, qdd, use_gravity=use_gravity)

@@ -15,9 +15,22 @@ MJCF semantics this parser gets right (each one is a real trap):
 - `<default>` classes: joint attribute resolution is explicit attr > joint's
   class > innermost body childclass > global default.
 - Joint type defaults to hinge; axis defaults to (0, 0, 1).
+- Joint `ref` is the joint value at which the body sits in its modelled pose:
+  the applied motion is M(q - ref), not M(q). The IR has no reference concept,
+  so M(-ref) is folded into the joint origin, which is exactly equivalent
+  because M(-ref) commutes with M(q) for hinge and slide.
+- `<option gravity="...">` is recorded on the IR (`robot.gravity`) and used by
+  `kinfast.dynamics.gravity`. Default is (0, 0, -9.81).
 - `free` joints (floating bases, common in quadruped models) are treated as
   fixed to the world; a note is recorded in `robot.parse_notes`. `ball` joints
   are not supported and raise.
+
+Mass: MuJoCo derives a body's mass and inertia from its geoms when `<inertial>`
+is absent. kinfast does not do geom-based inertia, so such bodies keep zero
+mass and the parser records which ones in `robot.parse_notes`, separating the
+bodies MuJoCo would have given geom mass from the ones it leaves massless too. If
+`<compiler settotalmass="...">` is present, the masses and inertias that were
+parsed are scaled so their total matches, the same way MuJoCo scales.
 
 Unknown elements (geoms, sites, actuators, sensors, assets, includes) are
 ignored: kinematics needs bodies, joints, and inertials.
@@ -55,6 +68,21 @@ def _axis_rot(axis, a):
     return [[c, -s, 0], [s, c, 0], [0, 0, 1]]
 
 
+def _axis_angle_mat(axis, a):
+    """Rotation by angle a about an arbitrary (unnormalized) axis."""
+    x, y, z = axis
+    n = math.sqrt(x * x + y * y + z * z)
+    if n < 1e-12:
+        return [[1.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]]
+    x, y, z = x / n, y / n, z / n
+    c, s, t = math.cos(a), math.sin(a), 1 - math.cos(a)
+    return [
+        [t * x * x + c, t * x * y - s * z, t * x * z + s * y],
+        [t * x * y + s * z, t * y * y + c, t * y * z - s * x],
+        [t * x * z - s * y, t * y * z + s * x, t * z * z + c],
+    ]
+
+
 def _matmul(A, B):
     return [[sum(A[i][k] * B[k][j] for k in range(3)) for j in range(3)]
             for i in range(3)]
@@ -86,9 +114,15 @@ class _Ctx:
         self.ang = math.pi / 180.0 if angle == "degree" else 1.0
         self.eulerseq = (comp.get("eulerseq", "xyz") if comp is not None
                          else "xyz")
+        stm = comp.get("settotalmass") if comp is not None else None
+        self.settotalmass = float(stm) if stm is not None else None
+        opt = root.find("option")
+        gv = opt.get("gravity") if opt is not None else None
+        self.gravity = _floats(gv, 3) if gv else (0.0, 0.0, -9.81)
         self.defaults = {}          # class name -> {attr: value} for joints
         self._collect_defaults(root.find("default"), "", {})
         self.notes = []
+        self.massless = []          # bodies left at zero mass (no <inertial>)
 
     def _collect_defaults(self, el, name, inherited):
         if el is None:
@@ -213,6 +247,24 @@ def parse_mjcf_string(text: str) -> Robot:
                 xyz = tuple(anchor[i] - prev_anchor[i] for i in range(3))
                 jrpy = (0.0, 0.0, 0.0)
 
+            # MuJoCo applies M(q - ref), not M(q). M(-ref) commutes with M(q)
+            # about the same axis, so folding it into the fixed joint origin is
+            # exact: origin @ M(-ref) @ M(q) == origin @ M(q - ref).
+            ref = ctx.jattr(jel, "ref", childclass)
+            if ref:
+                ref = float(ref) * (ctx.ang if jtype == "hinge" else 1.0)
+                if ref != 0.0:
+                    R_j = _euler_to_mat(jrpy, "XYZ")
+                    if jtype == "hinge":
+                        jrpy = _mat_to_rpy(
+                            _matmul(R_j, _axis_angle_mat(axis, -ref)))
+                    else:
+                        n = math.sqrt(sum(a * a for a in axis)) or 1.0
+                        shift = [-ref * a / n for a in axis]
+                        xyz = tuple(
+                            xyz[i] + sum(R_j[i][k] * shift[k] for k in range(3))
+                            for i in range(3))
+
             last = jel is joints[-1]
             zero_anchor = all(abs(a) < 1e-12 for a in anchor)
             child = name if (last and zero_anchor) else unique(f"{name}__jnt")
@@ -237,7 +289,10 @@ def parse_mjcf_string(text: str) -> Robot:
                 jrpy = (0.0, 0.0, 0.0)
             robot.joints.append(Joint(unique(f"{name}_fix"), "fixed",
                                       cur_parent, name, xyz, jrpy))
-        robot.links[name].inertial = _parse_inertial(body_el.find("inertial"), ctx)
+        inr_el = body_el.find("inertial")
+        if inr_el is None:
+            ctx.massless.append((name, body_el.find("geom") is not None))
+        robot.links[name].inertial = _parse_inertial(inr_el, ctx)
 
         for sub in body_el.findall("body"):
             walk(sub, name, childclass, counter)
@@ -245,8 +300,41 @@ def parse_mjcf_string(text: str) -> Robot:
     for body in world.findall("body"):
         walk(body, "world", "", counter)
 
+    _finish_mass(robot, ctx)
+    robot.gravity = tuple(ctx.gravity)
     robot.parse_notes = ctx.notes
     return robot
+
+
+def _finish_mass(robot, ctx):
+    """Report bodies left at zero mass and honor <compiler settotalmass>."""
+    from_geoms = [n for n, has_geom in ctx.massless if has_geom]
+    no_geoms = [n for n, has_geom in ctx.massless if not has_geom]
+    if from_geoms:
+        ctx.notes.append(
+            "zero mass (no <inertial>, and kinfast does not derive inertia "
+            "from the geoms the way MuJoCo does): " + ", ".join(from_geoms))
+    if no_geoms:
+        ctx.notes.append(
+            "zero mass (no <inertial> and no geoms, so MuJoCo leaves these "
+            "massless too): " + ", ".join(no_geoms))
+    if ctx.settotalmass is None:
+        return
+    inertials = [L.inertial for L in robot.links.values() if L.inertial is not None]
+    total = sum(i.mass for i in inertials)
+    if total <= 0.0:
+        ctx.notes.append(
+            f"settotalmass={ctx.settotalmass:g} ignored: no body has mass")
+        return
+    scale = ctx.settotalmass / total
+    for i in inertials:
+        i.mass = i.mass * scale
+        i.inertia = tuple(c * scale for c in i.inertia)
+    note = f"settotalmass={ctx.settotalmass:g}: masses scaled by {scale:.6g}"
+    if from_geoms:
+        note += (" over the bodies that have an <inertial>, so the scale "
+                 "differs from MuJoCo's, which counts geom-derived mass too")
+    ctx.notes.append(note)
 
 
 def parse_mjcf_file(path: str) -> Robot:

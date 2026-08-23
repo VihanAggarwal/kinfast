@@ -105,13 +105,40 @@ def mass_matrix(chain: CompiledChain, q: torch.Tensor) -> torch.Tensor:
     return M
 
 
-def gravity(chain: CompiledChain, q: torch.Tensor, g: float = GRAVITY) -> torch.Tensor:
-    """Generalized gravity torque g(q) = dU/dq. (B,dof)."""
+def _gravity_vector(chain, g, dtype, device):
+    """Resolve the gravity vector used by gravity().
+
+    g=None    -> the chain's own vector (from MJCF `<option gravity>`, else the
+                 default (0, 0, -9.81)).
+    g=scalar  -> (0, 0, -g), the historical meaning of the argument.
+    g=3-vector-> used as is (tensor, list or tuple).
+    """
+    if g is None:
+        vec = tuple(getattr(chain, "gravity", (0.0, 0.0, -GRAVITY)))
+    elif isinstance(g, torch.Tensor) and g.numel() == 3:
+        return g.reshape(3).to(dtype=dtype, device=device)
+    elif isinstance(g, (list, tuple)):
+        if len(g) != 3:
+            raise ValueError(f"gravity vector must have 3 components, got {len(g)}")
+        vec = tuple(g)
+    else:
+        vec = (0.0, 0.0, -float(g))
+    return torch.tensor(vec, dtype=dtype, device=device)
+
+
+def gravity(chain: CompiledChain, q: torch.Tensor, g=None) -> torch.Tensor:
+    """Generalized gravity torque g(q) = dU/dq. (B,dof).
+
+    By default the gravity vector recorded on the chain is used, so an MJCF
+    model with `<option gravity="0 0 -1">` or a tilted vector gets its own
+    gravity. Passing a scalar g keeps the old meaning (0, 0, -g); a 3-vector
+    is used directly.
+    """
     consts = _consts(chain, q.device, q.dtype)
     world = forward_kinematics(chain, q)
     B = q.shape[0]
     gq = torch.zeros(B, chain.dof, dtype=q.dtype, device=q.device)
-    g_vec = torch.tensor([0.0, 0.0, -g], dtype=q.dtype, device=q.device)
+    g_vec = _gravity_vector(chain, g, q.dtype, q.device)
     for L in consts["active"]:
         m = consts["mass"][L]
         if float(m) == 0.0:

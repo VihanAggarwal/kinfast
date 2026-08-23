@@ -51,6 +51,11 @@ class Robot:
     name: str
     links: dict = field(default_factory=dict)
     joints: list = field(default_factory=list)
+    # World gravity vector in m/s^2. URDF has no way to express it, so it keeps
+    # the default; MJCF `<option gravity="...">` overrides it.
+    gravity: tuple = (0.0, 0.0, -9.81)
+    # Human-readable remarks from the parser (things dropped or approximated).
+    parse_notes: list = field(default_factory=list)
 
     def root_link(self) -> str:
         children = {j.child for j in self.joints}
