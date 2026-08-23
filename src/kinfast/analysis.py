@@ -44,12 +44,19 @@ def condition_number(chain, q, link_index, translational: bool = True,
     zero out-of-plane row, so sigma_min is 0 at every configuration and the
     function reports ~1e12 everywhere. Pass `rows` to select the task rows
     explicitly (e.g. rows=(0, 1) for an xy-planar arm). Default: the 3 linear
-    rows (translational=True) or all 6."""
+    rows (translational=True) or all 6.
+
+    A chain with no movable joints has an empty Jacobian and no singular
+    values at all; it is treated as fully singular and returns inf for every
+    configuration, matching manipulability returning 0 on the same chain."""
     J = jacobian(chain, q, link_index)
     if rows is not None:
         J = J[:, list(rows), :]
     elif translational:
         J = J[:, :3, :]
+    if J.shape[-1] == 0:
+        return torch.full((J.shape[0],), float("inf"), dtype=J.dtype,
+                          device=J.device)
     s = torch.linalg.svdvals(J)
     return s[:, 0] / s[:, -1].clamp_min(1e-12)
 

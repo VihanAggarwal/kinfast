@@ -210,3 +210,40 @@ def test_workspace_infinite_prismatic_limit_raises():
         A.workspace(chain, chain.link_index["ee"], n=8)
     with pytest.raises(ValueError, match="finite"):
         kinfast.Robot(chain).random_configs(4)
+
+
+# a robot with no movable joints at all (one fixed joint, dof == 0)
+FIXED_ONLY = """
+<robot name="fixed_only">
+  <link name="base"/><link name="tip"/>
+  <joint name="jf" type="fixed"><parent link="base"/><child link="tip"/>
+    <origin xyz="0.5 0 0.2"/></joint>
+</robot>
+"""
+
+
+def test_condition_number_dof_zero_is_inf_not_index_error():
+    """Regression: an all-fixed chain gave J of shape (B, 3, 0), svdvals
+    returned (B, 0) and indexing s[:, 0] raised an opaque IndexError. The
+    chain is fully singular, so condition_number returns inf, consistent with
+    manipulability returning 0 and workspace returning a constant cloud."""
+    chain = compile_robot(parse_urdf_string(FIXED_ONLY), dtype=torch.float64)
+    assert chain.dof == 0
+    li = chain.link_index["tip"]
+    q = torch.zeros(3, 0, dtype=torch.float64)
+
+    k = A.condition_number(chain, q, li)
+    assert k.shape == (3,)
+    assert k.dtype == torch.float64
+    assert torch.isinf(k).all() and (k > 0).all()
+    k6 = A.condition_number(chain, q, li, translational=False)
+    assert k6.shape == (3,) and torch.isinf(k6).all()
+
+    w = A.manipulability(chain, q, li)
+    assert w.shape == (3,) and torch.all(w == 0.0)
+
+    ws = A.workspace(chain, li, n=50)
+    assert ws["points"].shape == (50, 3)
+    expect = torch.tensor([0.5, 0.0, 0.2], dtype=torch.float64)
+    assert torch.allclose(ws["points"], expect.expand(50, 3))
+    assert abs(ws["max_reach"].item() - math.sqrt(0.29)) < 1e-12
