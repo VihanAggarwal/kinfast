@@ -49,6 +49,67 @@ def test_condition_number_blows_up_at_singularity():
     assert A.condition_number(chain, q_good, li).item() < 10.0
 
 
+# planar 3R with unit links; the third joint makes the 3-row translational
+# Jacobian square (3x3) with a zero z row, which is the condition_number trap
+PLANAR_3R = """
+<robot name="p3r">
+  <link name="base"/><link name="l1"/><link name="l2"/><link name="l3"/><link name="ee"/>
+  <joint name="j1" type="revolute"><parent link="base"/><child link="l1"/>
+    <origin xyz="0 0 0"/><axis xyz="0 0 1"/>
+    <limit lower="-3.1" upper="3.1" velocity="2" effort="50"/></joint>
+  <joint name="j2" type="revolute"><parent link="l1"/><child link="l2"/>
+    <origin xyz="1 0 0"/><axis xyz="0 0 1"/>
+    <limit lower="-3.1" upper="3.1" velocity="2" effort="50"/></joint>
+  <joint name="j3" type="revolute"><parent link="l2"/><child link="l3"/>
+    <origin xyz="1 0 0"/><axis xyz="0 0 1"/>
+    <limit lower="-3.1" upper="3.1" velocity="2" effort="50"/></joint>
+  <joint name="jf" type="fixed"><parent link="l3"/><child link="ee"/>
+    <origin xyz="1 0 0"/></joint>
+</robot>
+"""
+
+
+def _planar_3r_cond_oracle(q1, q2, q3):
+    """Hand-assembled in-plane Jacobian of a unit-link planar 3R, via numpy."""
+    import numpy as np
+    s1, c1 = math.sin(q1), math.cos(q1)
+    s12, c12 = math.sin(q1 + q2), math.cos(q1 + q2)
+    s123, c123 = math.sin(q1 + q2 + q3), math.cos(q1 + q2 + q3)
+    J = np.array([[-s1 - s12 - s123, -s12 - s123, -s123],
+                  [c1 + c12 + c123, c12 + c123, c123]], dtype=np.float64)
+    s = np.linalg.svd(J, compute_uv=False)
+    return s[0] / s[-1]
+
+
+def test_condition_number_rows_selects_in_plane_rows_for_planar_3r():
+    chain = compile_robot(parse_urdf_string(PLANAR_3R), dtype=torch.float64)
+    li = chain.link_index["ee"]
+    q = torch.tensor([[0.3, 1.2, -0.8]], dtype=torch.float64)
+    # the in-plane 2x3 Jacobian is well conditioned here
+    k = A.condition_number(chain, q, li, rows=(0, 1))
+    assert k.shape == (1,)
+    expect = _planar_3r_cond_oracle(0.3, 1.2, -0.8)
+    assert expect < 10.0
+    assert abs(k.item() - expect) < 1e-9 * max(1.0, expect)
+    # without row selection the zero z row makes sigma_min 0 and the number
+    # says nothing about the arm; this is the trap the docstring describes
+    assert A.condition_number(chain, q, li).item() > 1e6
+    # rows=(0, 1) must also flag a true in-plane singularity (arm straight)
+    q_sing = torch.tensor([[0.3, 0.0, 0.0]], dtype=torch.float64)
+    assert A.condition_number(chain, q_sing, li, rows=(0, 1)).item() > 1e6
+
+
+def test_condition_number_rows_matches_default_on_planar_2r():
+    # for a 2-dof arm the zero z row is harmless (only 2 singular values), so
+    # selecting rows (0, 1) must reproduce the translational default exactly
+    chain = _p2r()
+    li = chain.link_index["ee"]
+    q = torch.tensor([[0.4, math.pi / 2], [-1.0, 0.7]], dtype=torch.float64)
+    k_default = A.condition_number(chain, q, li)
+    k_rows = A.condition_number(chain, q, li, rows=(0, 1))
+    assert torch.allclose(k_default, k_rows, rtol=1e-12, atol=0.0)
+
+
 def test_joint_limit_margin():
     chain = _p2r()
     mid = torch.zeros(1, 2, dtype=torch.float64)                 # mid-range

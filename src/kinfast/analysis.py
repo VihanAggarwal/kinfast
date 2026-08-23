@@ -1,9 +1,10 @@
 # src/kinfast/analysis.py
 """Workspace and dexterity analysis.
 
-  manipulability      Yoshikawa's measure w = sqrt(det(J J^T)) — how far the arm
+  manipulability      Yoshikawa's measure w = sqrt(det(J J^T)): how far the arm
                       is from a singularity (0 = singular). Batched.
-  condition_number    sigma_max / sigma_min of the Jacobian — isotropy of motion.
+  condition_number    sigma_max / sigma_min of the Jacobian: isotropy of motion.
+                      Both take `rows=` to pick the task rows (planar arms).
   joint_limit_margin  normalized distance of each config from its nearest limit
                       (1 = mid-range, 0 = on a limit).
   workspace           Monte-Carlo reachable-workspace point cloud + reach stats.
@@ -33,10 +34,21 @@ def manipulability(chain, q, link_index, translational: bool = True,
     return torch.sqrt(det.clamp_min(0.0))
 
 
-def condition_number(chain, q, link_index, translational: bool = True):
-    """Jacobian condition number sigma_max/sigma_min. (B,). inf near singularity."""
+def condition_number(chain, q, link_index, translational: bool = True,
+                     rows=None):
+    """Jacobian condition number sigma_max/sigma_min. (B,). Huge near singularity.
+
+    Same row-selection caveat as manipulability: the ratio only means something
+    when J has full row rank over the task rows you keep. For a planar arm with
+    3 or more joints the 3-row translational Jacobian carries an identically
+    zero out-of-plane row, so sigma_min is 0 at every configuration and the
+    function reports ~1e12 everywhere. Pass `rows` to select the task rows
+    explicitly (e.g. rows=(0, 1) for an xy-planar arm). Default: the 3 linear
+    rows (translational=True) or all 6."""
     J = jacobian(chain, q, link_index)
-    if translational:
+    if rows is not None:
+        J = J[:, list(rows), :]
+    elif translational:
         J = J[:, :3, :]
     s = torch.linalg.svdvals(J)
     return s[:, 0] / s[:, -1].clamp_min(1e-12)
