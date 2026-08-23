@@ -33,12 +33,27 @@ class CompiledChain:
     link_mass: torch.Tensor      # (n_links,)
     link_com: torch.Tensor       # (n_links, 3) COM in link frame
     link_inertia: torch.Tensor   # (n_links, 3, 3) inertia about COM in link frame
+    # Bumped on a device move or an explicit invalidate_cache(). FK folds the
+    # constants above into per-(device, dtype) derived tensors and keys that
+    # cache on this counter plus each source tensor's storage and in-place
+    # version, so a stale cache cannot outlive an edit. Treat the tensors as
+    # immutable anyway; the fold is not free.
+    _version: int = 0
 
     def to(self, device):
         for name in ("parent", "joint_origin", "joint_axis", "joint_type",
                      "q_index", "lower", "upper", "vmax", "link_mass",
                      "link_com", "link_inertia"):
             setattr(self, name, getattr(self, name).to(device))
+        self._version += 1
+        return self
+
+    def invalidate_cache(self):
+        """Drop cached derived constants (FK origin rotations, prismatic
+        directions, movable-joint index tensors). FK already notices an
+        in-place edit of a chain tensor on its own, so this is the escape hatch
+        for a change it cannot see. Returns self so it can be chained."""
+        self._version += 1
         return self
 
 
