@@ -12,26 +12,42 @@ from kinfast.fk import forward_kinematics
 from kinfast.compile import CompiledChain
 
 
+def _resolve_link(chain: CompiledChain, link_index) -> int:
+    """Turn a link index into a plain non-negative int, accepting Python-style
+    negatives (-1 is the last link, matching forward_kinematics(...)[:, -1])
+    and raising a readable IndexError for anything out of range."""
+    n = chain.n_links
+    idx = int(link_index)
+    if not -n <= idx < n:
+        raise IndexError(
+            f"link_index {link_index} out of range for {n} links "
+            f"(use chain.link_index[name] to look one up)")
+    return idx % n
+
+
 def jacobian_rp(chain: CompiledChain, q: torch.Tensor, link_index: int,
                 rp=None) -> torch.Tensor:
     """Geometric Jacobian computed from R/p lists (the fast path).
     rp: (wR, wp) from fk_rp at the same q; computed here if absent."""
-    from kinfast.fk import fk_rp
+    from kinfast.fk import fk_rp, _cache
     B = q.shape[0]
     device, dtype = q.device, q.dtype
+    link_index = _resolve_link(chain, link_index)
     if rp is None:
         rp = fk_rp(chain, q)
     wR, wp = rp
     p_ee = wp[link_index]                             # (B, 3)
     J = torch.zeros(B, 6, chain.dof, dtype=dtype, device=device)
-    axes = chain.joint_axis.to(device)
+    # Joint axes in q's dtype, so a float64 q works on a float32-compiled chain
+    # (and vice versa) the same way fk_rp does. The fk cache already holds them.
+    axes = _cache(chain, device, dtype)["axes"]
 
     i = link_index
     while i >= 0:
         jt = int(chain.joint_type[i])
         if jt != 0:
             col = int(chain.q_index[i])
-            axis_world = (wR[i] @ axes[i]).to(dtype)  # (B, 3)
+            axis_world = wR[i] @ axes[i]              # (B, 3)
             if jt == 1:  # revolute
                 J[:, :3, col] = torch.cross(axis_world, p_ee - wp[i], dim=-1)
                 J[:, 3:, col] = axis_world

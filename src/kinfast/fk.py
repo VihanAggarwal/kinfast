@@ -33,7 +33,7 @@ def _cache(chain: CompiledChain, device, dtype):
     pris = torch.nonzero(movable & (jt == 2), as_tuple=False).flatten()
     axes = chain.joint_axis.to(device=device, dtype=dtype)
     entry = {
-        "oR": oR, "op": op,
+        "oR": oR, "op": op, "axes": axes,
         "rev": rev, "rev_q": qi[rev], "rev_axes": axes[rev],
         "rev_oR": oR[rev],
         "pris": pris, "pris_q": qi[pris],
