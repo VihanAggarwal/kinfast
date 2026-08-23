@@ -16,7 +16,14 @@ class Robot:
     every method (fk, jacobian, ik, dynamics, collision): the compiled chain's
     constants are cast to it, so a robot compiled as float32 takes float64 q
     and returns float64 results. Velocities, accelerations, torques, and IK
-    targets are coerced to the dtype of q (or of the target when q is absent)."""
+    targets are coerced to the dtype of q (or of the target when q is absent).
+
+    That cast changes the container, not the content. A float32 chain fed
+    float64 q gives float64 tensors that still carry only ~7 correct digits,
+    because the origins, axes and inertias were rounded when the chain was
+    compiled. When you need real float64 accuracy, compile at float64:
+    `kinfast.load(path, dtype=torch.float64)` or `robot.double()`, which
+    rebuilds the constants from the parsed model."""
 
     def __init__(self, chain, ee_link=None, ir=None):
         self.chain = chain
@@ -26,17 +33,51 @@ class Robot:
 
     # ---- construction ----
     @classmethod
-    def from_ir(cls, robot_ir, repair_model=True, ee_link=None):
+    def from_ir(cls, robot_ir, repair_model=True, ee_link=None,
+                dtype=torch.float32):
+        """Compile a parsed model. `dtype` is the precision the constants are
+        compiled at (default float32); pass torch.float64 for a double chain."""
         if repair_model:
             robot_ir, _ = repair(robot_ir)
-        return cls(compile_robot(robot_ir), ee_link=ee_link, ir=robot_ir)
+        return cls(compile_robot(robot_ir, dtype=dtype), ee_link=ee_link,
+                   ir=robot_ir)
 
-    def to(self, device):
-        self.device = torch.device(device)
+    def to(self, device=None, dtype=None):
+        """Move to a device and/or recompile at a float precision, in place.
+
+        `device` moves the compiled constants. `dtype` REBUILDS them from the
+        parsed model, so switching to float64 recovers the digits a float32
+        compile discarded; casting the existing tensors up could not. A
+        torch.dtype may be passed positionally, mirroring Tensor.to. Returns
+        self, so `robot.to("cuda", torch.float64)` chains."""
+        if isinstance(device, torch.dtype):
+            device, dtype = None, device
+        if dtype is not None:
+            if self.ir is None:
+                raise ValueError(
+                    "cannot change dtype: this Robot was built without its IR, "
+                    "so the constants cannot be recompiled at a new precision. "
+                    "Load it with kinfast.load(..., dtype=...) instead.")
+            self.chain = compile_robot(self.ir, dtype=dtype)
+        if device is not None:
+            self.device = torch.device(device)
         self.chain.to(self.device)
         return self
 
+    def double(self):
+        """Recompile the chain at float64, in place. Returns self."""
+        return self.to(dtype=torch.float64)
+
+    def float(self):
+        """Recompile the chain at float32, in place. Returns self."""
+        return self.to(dtype=torch.float32)
+
     # ---- properties ----
+    @property
+    def dtype(self):
+        """The float dtype the chain's constants were compiled at."""
+        return self.chain.dtype
+
     @property
     def dof(self):
         return self.chain.dof
@@ -123,7 +164,12 @@ class Robot:
     def compile(self):
         """Generate robot-specific straight-line code for microsecond
         single-query FK / Jacobian / IK (the scalar backend). Returns a
-        CompiledRobot; the batched torch path on this Robot is unaffected."""
+        CompiledRobot; the batched torch path on this Robot is unaffected.
+
+        The generated code always computes in Python floats (float64), but it
+        can only be as accurate as the constants baked into it: compile the
+        Robot at float64 (`kinfast.load(..., dtype=torch.float64)` or
+        `robot.double()`) if you want float64 answers out of it."""
         from kinfast.codegen import CompiledRobot
         return CompiledRobot(self.chain)
 
@@ -193,18 +239,22 @@ def _expand_xacro(path, mappings=None):
     return doc.toprettyxml(indent="  ")
 
 
-def load(path, ee_link=None, mappings=None):
+def load(path, ee_link=None, mappings=None, dtype=torch.float32):
     """Load a robot from URDF, xacro, or MJCF (format auto-detected).
-    `mappings` are xacro property overrides, e.g. {"prefix": "left_"}."""
+    `mappings` are xacro property overrides, e.g. {"prefix": "left_"}.
+    `dtype` is the precision the chain's constants are compiled at: float32
+    by default, torch.float64 when you need double-precision kinematics."""
     with open(path, "r", encoding="utf-8") as f:
         text = f.read()
     if _is_xacro(path, text):
         text = _expand_xacro(path, mappings)
-    return load_string(text, ee_link=ee_link)
+    return load_string(text, ee_link=ee_link, dtype=dtype)
 
 
-def load_string(text, ee_link=None):
+def load_string(text, ee_link=None, dtype=torch.float32):
+    """Same as `load`, from URDF/MJCF text already in memory."""
     if _sniff(text) == "mjcf":
         from kinfast.mjcf.parse import parse_mjcf_string
-        return Robot.from_ir(parse_mjcf_string(text), ee_link=ee_link)
-    return Robot.from_ir(parse_urdf_string(text), ee_link=ee_link)
+        return Robot.from_ir(parse_mjcf_string(text), ee_link=ee_link,
+                             dtype=dtype)
+    return Robot.from_ir(parse_urdf_string(text), ee_link=ee_link, dtype=dtype)

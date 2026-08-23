@@ -40,12 +40,38 @@ class CompiledChain:
     # immutable anyway; the fold is not free.
     _version: int = 0
 
-    def to(self, device):
-        for name in ("parent", "joint_origin", "joint_axis", "joint_type",
-                     "q_index", "lower", "upper", "vmax", "link_mass",
-                     "link_com", "link_inertia"):
-            setattr(self, name, getattr(self, name).to(device))
+    # tensors that carry the model's real numbers, and the ones that are
+    # integer bookkeeping (never cast to a float dtype)
+    _FLOAT_FIELDS = ("joint_origin", "joint_axis", "lower", "upper", "vmax",
+                     "link_mass", "link_com", "link_inertia")
+    _INT_FIELDS = ("parent", "joint_type", "q_index")
+
+    @property
+    def dtype(self):
+        """The float dtype the constants were compiled at."""
+        return self.joint_origin.dtype
+
+    def to(self, device=None, dtype=None):
+        """Move and/or cast the compiled constants, in place.
+
+        Casting up (float32 -> float64) does NOT recover precision: the
+        constants were already rounded when they were compiled. To gain real
+        digits, rebuild from the IR with compile_robot(ir, dtype=...), which
+        is what Robot.to(dtype=...) does. A torch.dtype may be passed
+        positionally, mirroring Tensor.to.
+        """
+        if isinstance(device, torch.dtype):
+            device, dtype = None, device
+        for name in self._INT_FIELDS:
+            if device is not None:
+                setattr(self, name, getattr(self, name).to(device))
+        for name in self._FLOAT_FIELDS:
+            setattr(self, name, getattr(self, name).to(device=device, dtype=dtype))
+        # the derived-constant caches are keyed on this counter, so any move or
+        # cast invalidates them
         self._version += 1
+        if dtype is not None:
+            object.__setattr__(self, "_fk_cache", None)
         return self
 
     def invalidate_cache(self):

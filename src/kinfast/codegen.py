@@ -18,6 +18,15 @@ no tensors, no dispatch.
 
 This is deliberately the seed of the kinfast language roadmap: the same IR
 already feeds the batched torch backend; this is its scalar backend.
+
+Precision: the generated arithmetic is always Python-float, i.e. float64. Its
+accuracy is capped by the chain it was generated from, because every origin,
+axis and limit is a literal folded into the source at generation time. A
+float32 chain therefore yields a float64 code path that is only ~1e-7 accurate
+(the literals were rounded before they were printed), while a chain compiled
+with compile_robot(ir, dtype=torch.float64) - what kinfast.load(..., dtype=
+torch.float64) and Robot.double() give you - yields the full ~1e-15. Whatever
+the chain's dtype, `CompiledRobot.dtype` reports it.
 """
 import math
 
@@ -105,6 +114,8 @@ def generate_fk_source(chain):
     """
     E = _Emitter()
     n = chain.n_links
+    # widen to float64 so the literals print at the scalar path's working
+    # precision; a float32 chain still only carries float32 digits into them
     origin = chain.joint_origin.detach().cpu().double().numpy()
     axes = chain.joint_axis.detach().cpu().double().numpy()
     jtype = chain.joint_type.detach().cpu().numpy()
@@ -181,10 +192,16 @@ class CompiledRobot:
     """Scalar backend: microsecond single-query FK / Jacobian / IK for ONE robot.
 
     Complements the batched torch path; produced by `Robot.compile()`.
+
+    The math is float64 throughout (Python floats and float64 numpy arrays),
+    but the accuracy it can reach is set by the chain it was built from, whose
+    constants are baked into the generated source as literals. Build it from a
+    float64 chain to get float64 answers; `self.dtype` is the chain's dtype.
     """
 
     def __init__(self, chain):
         self.chain = chain
+        self.dtype = chain.dtype
         self.n_links = chain.n_links
         self.dof = chain.dof
         self.source = generate_fk_source(chain)
