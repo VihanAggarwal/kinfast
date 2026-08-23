@@ -11,10 +11,17 @@ What it reproduces, and how it is verified:
   group 1 with contacts off, collision geoms in group 0.
 
 Things to know: MuJoCo refuses massless moving bodies, so a body without an
-inertial gets a tiny placeholder (flagged in a comment). `package://pkg/...`
-mesh paths are rewritten to the path after the package name, relative to the
-`meshdir` you pass. MuJoCo loads STL/OBJ/MSH meshes; DAE is not supported by
-MuJoCo itself.
+inertial gets a tiny placeholder (flagged in a comment). A link that carries a
+real inertia tensor but zero mass (URDFs use these for flanges and tool frames)
+keeps its tensor and only borrows the placeholder mass, so the emitted mass
+matrix still matches kinfast's. `package://pkg/...` mesh paths are rewritten to
+the path after the package name, relative to the `meshdir` you pass. MuJoCo
+loads STL/OBJ/MSH meshes; DAE is not supported by MuJoCo itself.
+
+MuJoCo also reserves the body name "world" for the top-level worldbody. A URDF
+root link called `world` is therefore not emitted as a body of its own: it is
+welded to the world frame at identity anyway, so its subtree is emitted
+directly under <worldbody>. A non-root link named `world` is renamed instead.
 """
 import math
 import re
@@ -56,6 +63,15 @@ def _pose_attrs(xyz, rpy):
 
 
 _PKG = re.compile(r"^package://[^/]+/")
+
+# MuJoCo's top-level body is always named "world"; no other body may take it.
+_WORLD = "world"
+# Mass we hand MuJoCo for a link whose source says zero mass but gives a real
+# inertia tensor (URDFs use these for flanges and tool frames). MuJoCo refuses
+# a massless moving body, so it needs something positive; this is small enough
+# that the mass it adds stays far below any dynamics tolerance, and it lets the
+# real tensor through instead of the 1e-6 placeholder.
+_INERTIA_ONLY_MASS = 1e-9
 
 
 def _mesh_file(path, meshdir_strip):
@@ -109,26 +125,49 @@ def emit_mjcf(robot: Robot, geometry: bool = True, meshdir: str = "",
 
     def inertial_line(link, is_root, indent):
         inr = link.inertial
-        if inr is not None and inr.mass > 0:
-            ixx, iyy, izz, ixy, ixz, iyz = inr.inertia
-            if ixx == iyy == izz == 0.0:
-                return (f'{indent}<inertial pos="{_f(inr.com)}" mass="{inr.mass:.9g}" '
-                        f'diaginertia="1e-6 1e-6 1e-6"/><!-- no inertia tensor in source -->')
+        has_mass = inr is not None and inr.mass > 0
+        has_tensor = inr is not None and any(v != 0.0 for v in inr.inertia)
+        if has_mass and has_tensor:
             return (f'{indent}<inertial pos="{_f(inr.com)}" mass="{inr.mass:.9g}" '
-                    f'fullinertia="{_f((ixx, iyy, izz, ixy, ixz, iyz))}"/>')
+                    f'fullinertia="{_f(inr.inertia)}"/>')
+        if has_mass:
+            return (f'{indent}<inertial pos="{_f(inr.com)}" mass="{inr.mass:.9g}" '
+                    f'diaginertia="1e-6 1e-6 1e-6"/><!-- no inertia tensor in source -->')
+        if has_tensor:
+            # Zero mass but a real tensor. Keep the tensor; MuJoCo will not take
+            # a massless moving body, so lend it a negligible mass.
+            return (f'{indent}<inertial pos="{_f(inr.com)}" mass="{_INERTIA_ONLY_MASS:.9g}" '
+                    f'fullinertia="{_f(inr.inertia)}"/>'
+                    f'<!-- source mass was 0; mass is a placeholder, inertia is real -->')
         if is_root:
             return None
         return (f'{indent}<inertial pos="0 0 0" mass="1e-3" diaginertia="1e-6 1e-6 1e-6"/>'
                 f'<!-- placeholder: source link had no inertial -->')
 
+    # "world" is MuJoCo's own top-level body; nothing else may be called that.
+    taken = set(robot.links)
+
+    def body_name(link_name):
+        if link_name != _WORLD:
+            return link_name
+        alt, k = "world_link", 1
+        while alt in taken:
+            k += 1
+            alt = f"world_link_{k}"
+        taken.add(alt)
+        return alt
+
     def body(link_name, joint, depth):
         ind = "  " * depth
         link = robot.links[link_name]
+        name = body_name(link_name)
+        note = ("" if name == link_name else
+                f'<!-- renamed from "{link_name}": reserved by MuJoCo -->')
         if joint is None:
-            lines.append(f'{ind}<body name={quoteattr(link_name)}>')
+            lines.append(f'{ind}<body name={quoteattr(name)}>{note}')
         else:
-            lines.append(f'{ind}<body name={quoteattr(link_name)}'
-                         f'{_pose_attrs(joint.origin_xyz, joint.origin_rpy)}>')
+            lines.append(f'{ind}<body name={quoteattr(name)}'
+                         f'{_pose_attrs(joint.origin_xyz, joint.origin_rpy)}>{note}')
         il = inertial_line(link, joint is None, ind + "  ")
         if il:
             lines.append(il)
@@ -147,7 +186,18 @@ def emit_mjcf(robot: Robot, geometry: bool = True, meshdir: str = "",
             body(cj.child, cj, depth + 1)
         lines.append(f'{ind}</body>')
 
-    body(root, None, 2)
+    if root == _WORLD:
+        # The root is welded to the world frame at identity, so dropping its
+        # body and hanging the subtree straight off <worldbody> is exact, and
+        # it is the only way MuJoCo will take a root link named "world".
+        lines.append('    <!-- root link "world" is MuJoCo\'s worldbody; '
+                     'its subtree is emitted directly under it -->')
+        if geometry:
+            lines.extend(geom_lines(robot.links[root], "    "))
+        for cj in children.get(root, []):
+            body(cj.child, cj, 2)
+    else:
+        body(root, None, 2)
 
     head = [f'<mujoco model={quoteattr(robot.name)}>',
             '  <compiler angle="radian"'
