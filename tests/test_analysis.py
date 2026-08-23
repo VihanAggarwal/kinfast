@@ -82,3 +82,70 @@ def test_transform_points_frames():
 def p_world_to_frame_roundtrip(robot, p_world, q):
     """Helper: identity transform (from==to) must return the input unchanged."""
     return robot.transform_points(p_world[0], q, from_link="ee", to_link="ee")
+
+
+def test_joint_limit_margin_with_infinite_limits():
+    """A joint with no limit is never near one: its margin is 1, not NaN, and
+    it must not hide another joint that really is on a limit."""
+    chain = _p2r()
+    chain.lower = torch.tensor([-math.inf, -3.1], dtype=torch.float64)
+    chain.upper = torch.tensor([math.inf, 3.1], dtype=torch.float64)
+    q = torch.tensor([[0.0, 0.0], [5.0, 3.1], [-40.0, 1.55]], dtype=torch.float64)
+    m = A.joint_limit_margin(chain, q)
+    assert torch.isfinite(m).all()
+    assert abs(m[0].item() - 1.0) < 1e-12
+    assert m[1].item() < 1e-12              # j2 sits on its limit
+    assert abs(m[2].item() - 0.5) < 1e-12   # j2 halfway out; j1 unlimited
+    # half-infinite: only the finite side can be violated
+    chain.lower = torch.tensor([-math.inf, -3.1], dtype=torch.float64)
+    chain.upper = torch.tensor([1.0, 3.1], dtype=torch.float64)
+    q = torch.tensor([[-100.0, 0.0], [2.0, 0.0]], dtype=torch.float64)
+    m = A.joint_limit_margin(chain, q)
+    assert abs(m[0].item() - 1.0) < 1e-12
+    assert m[1].item() == 0.0
+
+
+def test_workspace_with_infinite_revolute_limits():
+    """Unlimited revolute joints are sampled over a full turn. Oracle: a planar
+    2R with unit links and free joints reaches radius 2 and fills the disk, so
+    points must be finite, max_reach close to 2 and the centroid near 0. An
+    inf-poisoned sampler gives NaN for all of these."""
+    chain = _p2r()
+    chain.lower = torch.tensor([-math.inf, -math.inf], dtype=torch.float64)
+    chain.upper = torch.tensor([math.inf, math.inf], dtype=torch.float64)
+    li = chain.link_index["ee"]
+    ws = A.workspace(chain, li, n=20000, seed=3)
+    assert torch.isfinite(ws["points"]).all()
+    assert ws["max_reach"].item() <= 2.0 + 1e-9
+    assert ws["max_reach"].item() > 1.99
+    assert torch.isfinite(ws["centroid"]).all()
+    assert ws["centroid"].abs().max().item() < 0.05
+    # the sampler respects a finite side when only one bound is infinite
+    chain.lower = torch.tensor([-math.inf, 0.0], dtype=torch.float64)
+    chain.upper = torch.tensor([math.inf, 0.0], dtype=torch.float64)
+    lo, hi = A.sampling_bounds(chain)
+    assert lo.tolist() == [-math.pi, 0.0] and hi.tolist() == [math.pi, 0.0]
+    chain.lower = torch.tensor([1.0, -3.1], dtype=torch.float64)
+    chain.upper = torch.tensor([math.inf, 3.1], dtype=torch.float64)
+    lo, hi = A.sampling_bounds(chain)
+    assert lo[0].item() == 1.0 and abs(hi[0].item() - (1.0 + 2 * math.pi)) < 1e-12
+
+
+def test_workspace_infinite_prismatic_limit_raises():
+    """A prismatic joint with an infinite limit has no finite range to draw
+    from; that must be a clear error, not a NaN point cloud."""
+    import pytest
+    urdf = """
+    <robot name="slide">
+      <link name="base"/><link name="l1"/><link name="ee"/>
+      <joint name="s" type="prismatic"><parent link="base"/><child link="l1"/>
+        <axis xyz="1 0 0"/><limit lower="0" upper="0.5" velocity="1" effort="1"/></joint>
+      <joint name="j" type="revolute"><parent link="l1"/><child link="ee"/>
+        <axis xyz="0 0 1"/><limit lower="-1" upper="1" velocity="1" effort="1"/></joint>
+    </robot>"""
+    chain = compile_robot(parse_urdf_string(urdf), dtype=torch.float64)
+    chain.upper = torch.tensor([math.inf, 1.0], dtype=torch.float64)
+    with pytest.raises(ValueError, match="prismatic"):
+        A.workspace(chain, chain.link_index["ee"], n=8)
+    with pytest.raises(ValueError, match="finite"):
+        kinfast.Robot(chain).random_configs(4)

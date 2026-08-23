@@ -7,6 +7,7 @@ from kinfast.compile import compile_robot
 from kinfast.fk import forward_kinematics
 from kinfast.jacobian import jacobian as _jacobian
 from kinfast.ik import ik as _ik
+from kinfast.analysis import sampling_bounds
 from kinfast import dynamics as _dyn
 
 
@@ -60,7 +61,10 @@ class Robot:
 
     # ---- kinematics ----
     def random_configs(self, n):
-        lo, hi = self.chain.lower, self.chain.upper
+        """Uniform random configurations inside the joint limits. Revolute
+        joints with infinite limits are sampled over a full turn; prismatic
+        joints with infinite limits raise ValueError."""
+        lo, hi = sampling_bounds(self.chain)
         return lo + (hi - lo) * torch.rand(n, self.dof, device=self.device)
 
     def fk_all(self, q):

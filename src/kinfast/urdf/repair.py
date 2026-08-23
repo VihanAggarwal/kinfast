@@ -68,6 +68,27 @@ def _fix_axis(j, findings):
 
 def _fix_limits(j, findings):
     lo, hi = j.limit
+    if not (math.isfinite(lo) and math.isfinite(hi)):
+        # <limit lower="-inf" upper="inf"/> parses fine but poisons everything
+        # downstream: lo + (hi - lo) * u is NaN, and so is the limit margin.
+        # Treat an infinite or NaN bound as missing. If one side is finite it
+        # is kept and the default width is laid out next to it.
+        if j.type == "continuous":
+            default = _CONTINUOUS_LIMIT
+        elif j.type == "revolute":
+            default = _DEFAULT_LIMIT
+        else:
+            default = (-1.0, 1.0)
+        width = default[1] - default[0]
+        if math.isfinite(lo):
+            j.limit = (lo, lo + width)
+        elif math.isfinite(hi):
+            j.limit = (hi - width, hi)
+        else:
+            j.limit = default
+        findings.append(Finding("nonfinite_limits", j.name,
+                                f"limits ({lo}, {hi}) are not finite; set to {j.limit}"))
+        return
     if j.type == "continuous" and lo == 0.0 and hi == 0.0:
         j.limit = _CONTINUOUS_LIMIT
         return

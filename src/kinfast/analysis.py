@@ -8,6 +8,7 @@
                       (1 = mid-range, 0 = on a limit).
   workspace           Monte-Carlo reachable-workspace point cloud + reach stats.
 """
+import math
 import torch
 from kinfast.fk import forward_kinematics
 from kinfast.jacobian import jacobian
@@ -47,17 +48,58 @@ def joint_limit_margin(chain, q):
     lo, hi = chain.lower.to(q.device), chain.upper.to(q.device)
     span = (hi - lo).clamp_min(1e-12)
     d = torch.minimum(q - lo, hi - q) / (0.5 * span)
+    # An unbounded joint (inf or NaN limit) has no mid-range to normalize
+    # against; inf/inf would give NaN here. Such a joint is at full margin
+    # unless q actually sits past whichever bound is finite.
+    violated = (q < lo) | (q > hi)
+    d = torch.where(torch.isfinite(span), d, (~violated).to(d.dtype))
     return d.clamp(0.0, 1.0).min(dim=-1).values
+
+
+def sampling_bounds(chain):
+    """Finite (lower, upper) bounds, one per dof, for drawing random configs.
+
+    A joint whose limit is infinite (or NaN) cannot be sampled as
+    lo + (hi - lo) * u: that is -inf + inf * u, which is NaN. A revolute joint
+    with an unbounded limit is sampled over one full turn, anchored at the
+    finite side if there is one, so every pose it can reach is still covered.
+    A prismatic joint with an unbounded limit has no natural range, so that
+    raises ValueError instead of inventing one. Finite limits pass through
+    untouched."""
+    lo, hi = chain.lower, chain.upper
+    lo_ok, hi_ok = torch.isfinite(lo), torch.isfinite(hi)
+    if bool((lo_ok & hi_ok).all()):
+        return lo, hi
+    # joint type lives on links; q_index maps each movable link to its q slot
+    q_index = chain.q_index.to(lo.device)
+    jtype = chain.joint_type.to(lo.device)
+    movable = q_index >= 0
+    type_per_dof = torch.zeros(chain.dof, dtype=torch.long, device=lo.device)
+    type_per_dof[q_index[movable]] = jtype[movable]
+    bad = ~(lo_ok & hi_ok)
+    prismatic_bad = bad & (type_per_dof == 2)
+    if bool(prismatic_bad.any()):
+        names = [chain.joint_names[i] for i in prismatic_bad.nonzero().flatten().tolist()]
+        raise ValueError(
+            f"prismatic joint(s) {names} have non-finite limits; "
+            "joint limits must be finite to sample configurations")
+    turn = 2.0 * math.pi
+    lo_s = torch.where(lo_ok, lo, torch.where(hi_ok, hi - turn, torch.full_like(lo, -math.pi)))
+    hi_s = torch.where(hi_ok, hi, torch.where(lo_ok, lo + turn, torch.full_like(hi, math.pi)))
+    return lo_s, hi_s
 
 
 def workspace(chain, link_index, n: int = 10000, seed: int = 0, device="cpu"):
     """Monte-Carlo reachable workspace of a link origin.
 
-    Returns dict with points (n,3), max_reach, min_reach, centroid — enough for
-    quick 'can this arm reach my part?' MechE questions.
+    Returns dict with points (n,3), max_reach, min_reach, centroid: enough for
+    quick 'can this arm reach my part?' MechE questions. Revolute joints with
+    infinite limits are sampled over a full turn; prismatic ones with infinite
+    limits raise ValueError (see sampling_bounds).
     """
     g = torch.Generator(device="cpu").manual_seed(seed)
-    lo, hi = chain.lower.cpu(), chain.upper.cpu()
+    lo, hi = sampling_bounds(chain)
+    lo, hi = lo.cpu(), hi.cpu()
     # sample on the CPU generator (reproducible), then move to wherever the
     # chain lives (a CUDA robot must not mix CPU randoms with device limits)
     q = lo + (hi - lo) * torch.rand(n, chain.dof, generator=g, dtype=lo.dtype)
