@@ -114,8 +114,11 @@ def workspace(chain, link_index, n: int = 10000, seed: int = 0, device="cpu"):
     Returns dict with points (n,3), max_reach, min_reach, centroid: enough for
     quick 'can this arm reach my part?' MechE questions. Revolute joints with
     infinite limits are sampled over a full turn; prismatic ones with infinite
-    limits raise ValueError (see sampling_bounds).
+    limits raise ValueError (see sampling_bounds). n must be at least 1:
+    reach statistics are undefined over an empty sample.
     """
+    if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+        raise ValueError(f"workspace needs an integer n >= 1 samples, got {n!r}")
     g = torch.Generator(device="cpu").manual_seed(seed)
     lo, hi = sampling_bounds(chain)
     lo, hi = lo.cpu(), hi.cpu()

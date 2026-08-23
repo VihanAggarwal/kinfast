@@ -128,6 +128,39 @@ def test_workspace_reach_bounds():
     assert ws["points"].shape == (20000, 3)
 
 
+def test_workspace_rejects_empty_sample():
+    # n=0 used to fall through to an empty (0,3) cloud and die inside torch's
+    # max() reduction; the caller's mistake should be named, not torch internals
+    import pytest
+    chain = _p2r()
+    li = chain.link_index["ee"]
+    for bad in (0, -5):
+        with pytest.raises(ValueError, match="n >= 1"):
+            A.workspace(chain, li, n=bad)
+
+
+def test_workspace_single_sample_is_consistent():
+    # n=1 is the smallest legal call: every statistic collapses onto the one
+    # point, whose reach is checked against a hand-computed planar FK
+    chain = _p2r()
+    li = chain.link_index["ee"]
+    ws = A.workspace(chain, li, n=1, seed=3)
+    assert ws["points"].shape == (1, 3)
+    p = ws["points"][0]
+    # recover the sampled config the same way workspace does and check the
+    # point against x = cos(q1) + cos(q1+q2), y = sin(q1) + sin(q1+q2)
+    g = torch.Generator(device="cpu").manual_seed(3)
+    lo, hi = chain.lower, chain.upper
+    q = (lo + (hi - lo) * torch.rand(1, chain.dof, generator=g, dtype=lo.dtype))[0]
+    x = math.cos(q[0]) + math.cos(q[0] + q[1])
+    y = math.sin(q[0]) + math.sin(q[0] + q[1])
+    assert abs(p[0].item() - x) < 1e-12 and abs(p[1].item() - y) < 1e-12
+    r = math.hypot(x, y)
+    assert abs(ws["max_reach"].item() - r) < 1e-12
+    assert abs(ws["min_reach"].item() - r) < 1e-12
+    assert torch.allclose(ws["centroid"], p)
+
+
 def test_transform_points_frames():
     robot = kinfast.load_string(PLANAR_2R.replace('name="p2r"', 'name="p2r2"'))
     q = torch.tensor([[math.pi / 2, 0.0]])
