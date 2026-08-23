@@ -15,6 +15,14 @@ import torch
 from kinfast import dynamics as D
 
 
+def _gain(k, q):
+    """Bring a scalar or (dof,) gain onto q's dtype and device. A tensor gain
+    that requires grad keeps its graph (the cast is differentiable)."""
+    if isinstance(k, torch.Tensor):
+        return k.to(dtype=q.dtype, device=q.device)
+    return torch.as_tensor(k, dtype=q.dtype, device=q.device)
+
+
 def gravity_compensation(chain, q, qd=None):
     """tau that exactly cancels gravity at q. (B,dof)."""
     return D.gravity(chain, q)
@@ -22,12 +30,14 @@ def gravity_compensation(chain, q, qd=None):
 
 def pd_gravity(chain, q, qd, q_des, kp, kd):
     """PD around q_des with gravity feedforward. kp/kd: scalars or (dof,)."""
+    kp, kd = _gain(kp, q), _gain(kd, q)
     return kp * (q_des - q) - kd * qd + D.gravity(chain, q)
 
 
 def computed_torque(chain, q, qd, q_des, qd_des, qdd_des, kp, kd):
     """Feedback linearization: tau = M(q) v + c(q,qd) + g(q) with
     v = qdd_des + kp e + kd de. Closed-loop error obeys e'' + kd e' + kp e = 0."""
+    kp, kd = _gain(kp, q), _gain(kd, q)
     v = qdd_des + kp * (q_des - q) + kd * (qd_des - qd)
     M = D.mass_matrix(chain, q)
     return (M @ v.unsqueeze(-1)).squeeze(-1) + D.coriolis(chain, q, qd) + D.gravity(chain, q)
