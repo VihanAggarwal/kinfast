@@ -24,6 +24,10 @@ MJCF semantics this parser gets right (each one is a real trap):
 - `free` joints (floating bases, common in quadruped models) are treated as
   fixed to the world; a note is recorded in `robot.parse_notes`. `ball` joints
   are not supported and raise.
+- `<include file=...>` is spliced in the way MuJoCo does it, when the model is
+  parsed from a file (or given an explicit `base_dir`) so the path can be
+  resolved. Menagerie `scene.xml` files are exactly this: a worldbody with a
+  light and a floor, and every body pulled in from the robot's own xml.
 
 Mass: MuJoCo derives a body's mass and inertia from its geoms when `<inertial>`
 is absent. kinfast does not do geom-based inertia, so such bodies keep zero
@@ -32,10 +36,11 @@ bodies MuJoCo would have given geom mass from the ones it leaves massless too. I
 `<compiler settotalmass="...">` is present, the masses and inertias that were
 parsed are scaled so their total matches, the same way MuJoCo scales.
 
-Unknown elements (geoms, sites, actuators, sensors, assets, includes) are
-ignored: kinematics needs bodies, joints, and inertials.
+Unknown elements (geoms, sites, actuators, sensors, assets) are ignored:
+kinematics needs bodies, joints, and inertials.
 """
 import math
+import os
 import xml.etree.ElementTree as ET
 
 from kinfast.ir import Robot, Link, Joint, Inertial
@@ -105,6 +110,63 @@ def _mat_to_rpy(R):
                 math.atan2(-R[2][0], sy),
                 math.atan2(R[1][0], R[0][0]))
     return (math.atan2(-R[1][2], R[1][1]), math.atan2(-R[2][0], sy), 0.0)
+
+
+# top-level sections that appear once per file and get folded together when
+# an include contributes its own copy
+_MERGED_SECTIONS = ("worldbody", "default", "asset", "contact", "equality",
+                    "tendon", "actuator", "sensor", "keyframe")
+
+
+def _includes(root):
+    """Every <include file=...> left anywhere in the tree, outermost first."""
+    return [el.get("file") or "" for el in root.iter("include")]
+
+
+def _splice_includes(root, base_dir, seen, missing):
+    """Replace each <include file=...> child with the included file's children,
+    the way MuJoCo does. Nested includes resolve against their own file.
+
+    A file that is not there is collected in `missing` rather than raised on:
+    partial checkouts routinely drop the actuator/sensor fragments a model
+    includes, and those hold no kinematics. It only becomes an error if the
+    model ends up with no bodies at all."""
+    out = []
+    for el in list(root):
+        if el.tag != "include":
+            out.append(el)
+            continue
+        fname = el.get("file")
+        if not fname:
+            raise ValueError("<include> element has no `file` attribute")
+        path = os.path.normpath(os.path.join(base_dir, fname))
+        if path in seen:            # MuJoCo forbids including a file twice
+            continue
+        if not os.path.isfile(path):
+            missing.append((fname, path))
+            continue
+        seen.add(path)
+        sub = ET.parse(path).getroot()
+        if sub.tag != "mujoco":
+            raise ValueError(f"included file {path} must have a <mujoco> root, "
+                             f"got <{sub.tag}>")
+        _splice_includes(sub, os.path.dirname(path) or ".", seen, missing)
+        out.extend(list(sub))
+    root[:] = out
+
+
+def _merge_sections(root):
+    """Fold repeated top-level sections into the first one of each kind, so
+    `root.find("worldbody")` sees every body an include contributed."""
+    first, out = {}, []
+    for el in list(root):
+        if el.tag in _MERGED_SECTIONS and el.tag in first:
+            first[el.tag].extend(list(el))
+            continue
+        if el.tag in _MERGED_SECTIONS:
+            first[el.tag] = el
+        out.append(el)
+    root[:] = out
 
 
 class _Ctx:
@@ -183,14 +245,53 @@ def _parse_inertial(el, ctx):
     return Inertial(mass, com, i)
 
 
-def parse_mjcf_string(text: str) -> Robot:
+def _raise_no_bodies(root, world, missing):
+    """A model whose worldbody holds no <body> has no kinematics at all. The
+    usual cause is a Menagerie scene.xml parsed as a string, so the <include>
+    that holds the robot was never resolved. Say which file is missing."""
+    name = root.get("model", "the model")
+    if missing:
+        files = ", ".join(f"{f!r} (looked at {p})" for f, p in missing)
+        raise FileNotFoundError(
+            f"MJCF model {name!r} has no bodies of its own and its "
+            f"<include file={files}> could not be read; includes resolve "
+            "relative to the file that names them, so load the model from "
+            "its own directory")
+    pending = _includes(root)
+    if pending:
+        files = ", ".join(repr(f) for f in pending)
+        raise ValueError(
+            f"MJCF model {name!r} has no bodies of its own: every body comes "
+            f"from <include file={files}>, which was not expanded because the "
+            "model was parsed from a string with no directory to resolve it "
+            "against. Load it from disk with kinfast.load(path) (or pass "
+            "base_dir=), or load the included file directly.")
+    raise ValueError(
+        f"MJCF model {name!r} has no bodies: its <worldbody> holds "
+        f"{len(world)} element(s) but no <body>, so there is no kinematic "
+        "chain to build. Point kinfast at the file that defines the robot.")
+
+
+def parse_mjcf_string(text: str, base_dir: str = None) -> Robot:
+    """Parse MJCF text. `base_dir` is the directory <include file=...> paths
+    resolve against; without it includes cannot be read and a model that has
+    all of its bodies behind an include raises instead of coming back empty."""
     root = ET.fromstring(text)
     if root.tag != "mujoco":
         raise ValueError(f"root element must be <mujoco>, got <{root.tag}>")
+    missing = []
+    if base_dir is not None:
+        _splice_includes(root, base_dir, set(), missing)
+        _merge_sections(root)
     ctx = _Ctx(root)
+    for fname, path in missing:
+        ctx.notes.append(f"<include file={fname!r}> not found at {path}; "
+                         "ignored (it carries no kinematics)")
     world = root.find("worldbody")
     if world is None:
         raise ValueError("no <worldbody>")
+    if not world.findall("body"):
+        _raise_no_bodies(root, world, missing)
 
     robot = Robot(root.get("model", "mjcf_robot"),
                   links={"world": Link("world")}, joints=[])
@@ -339,4 +440,4 @@ def _finish_mass(robot, ctx):
 
 def parse_mjcf_file(path: str) -> Robot:
     with open(path, "r", encoding="utf-8") as f:
-        return parse_mjcf_string(f.read())
+        return parse_mjcf_string(f.read(), base_dir=os.path.dirname(os.path.abspath(path)))

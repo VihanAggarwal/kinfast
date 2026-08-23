@@ -1,5 +1,7 @@
 # src/kinfast/robot.py
 """Ergonomic surface: five-line load + fk/jacobian/ik."""
+import difflib
+import os
 import torch
 from kinfast.urdf.parse import parse_urdf_string, parse_urdf_file
 from kinfast.urdf.repair import repair
@@ -9,6 +11,21 @@ from kinfast.jacobian import jacobian as _jacobian
 from kinfast.ik import ik as _ik
 from kinfast.analysis import sampling_bounds
 from kinfast import dynamics as _dyn
+
+
+def _name_hint(name, known, kind):
+    """`unknown X 'foo'; did you mean 'bar'? known X are: ...` with the list
+    trimmed so a 200-link humanoid does not print a wall of text."""
+    known = list(known)
+    close = difflib.get_close_matches(str(name), [str(k) for k in known], n=3,
+                                      cutoff=0.6)
+    msg = f"unknown {kind} {name!r}"
+    if close:
+        msg += "; did you mean " + " or ".join(repr(c) for c in close) + "?"
+    shown = ", ".join(repr(k) for k in known[:12])
+    if len(known) > 12:
+        shown += f", ... (+{len(known) - 12} more)"
+    return msg + f"; this robot's {kind}s are: {shown or '(none)'}"
 
 
 class Robot:
@@ -29,6 +46,9 @@ class Robot:
         self.chain = chain
         self.ir = ir                      # the parsed model, kept for export
         self.device = torch.device("cpu")
+        if ee_link is not None and ee_link not in chain.link_index:
+            raise ValueError(_name_hint(ee_link, chain.link_names, "link")
+                             + " (ee_link must name one of them)")
         self.ee_link = ee_link or chain.link_names[-1]
 
     # ---- construction ----
@@ -93,7 +113,12 @@ class Robot:
 
     def q_index(self, joint_name):
         """Index into q for a named joint."""
-        return self.chain.joint_names.index(joint_name)
+        try:
+            return self.chain.joint_names.index(joint_name)
+        except ValueError:
+            raise ValueError(
+                _name_hint(joint_name, self.chain.joint_names, "movable joint")
+                + " (fixed joints carry no q entry)") from None
 
     @property
     def lower(self):
@@ -104,7 +129,12 @@ class Robot:
         return self.chain.upper
 
     def link_id(self, name):
-        return self.chain.link_index[name]
+        """Row of `fk_all` for a named link."""
+        try:
+            return self.chain.link_index[name]
+        except KeyError:
+            raise KeyError(_name_hint(name, self.chain.link_names,
+                                      "link")) from None
 
     @property
     def parse_notes(self):
@@ -185,11 +215,22 @@ class Robot:
     # ---- frames ----
     def transform_points(self, points, q, from_link, to_link="world"):
         """Express points given in `from_link`'s frame in `to_link`'s frame
-        (or the world frame). points: (N,3) shared across the batch or (B,N,3).
-        Returns (B,N,3)."""
+        (or the world frame). points: (N,3) shared across the batch or (B,N,3),
+        as a tensor or anything torch can make one from. Returns (B,N,3).
+
+        Like every other method here, q's dtype is the working dtype: points
+        are cast to it (and to q's device) rather than blowing up on a mixed
+        float32/float64 matmul."""
         from kinfast import transforms as _T
         world = self.fk_all(q)                                  # (B,n,4,4)
         B = world.shape[0]
+        if not isinstance(points, torch.Tensor):
+            points = torch.as_tensor(points)
+        # .to is a no-op when it already matches and stays differentiable
+        points = points.to(dtype=world.dtype, device=world.device)
+        if points.dim() not in (2, 3) or points.shape[-1] != 3:
+            raise ValueError("points must be (N,3) or (B,N,3), got shape "
+                             f"{tuple(points.shape)}")
         if points.dim() == 2:
             points = points.unsqueeze(0).expand(B, -1, -1)
         ones = torch.ones(*points.shape[:-1], 1, dtype=points.dtype,
@@ -252,18 +293,31 @@ def load(path, ee_link=None, mappings=None, dtype=torch.float32):
     """Load a robot from URDF, xacro, or MJCF (format auto-detected).
     `mappings` are xacro property overrides, e.g. {"prefix": "left_"}.
     `dtype` is the precision the chain's constants are compiled at: float32
-    by default, torch.float64 when you need double-precision kinematics."""
+    by default, torch.float64 when you need double-precision kinematics.
+    MJCF <include file=...> paths resolve against this file's directory."""
+    if not os.path.isfile(path):
+        if os.path.isdir(path):
+            raise IsADirectoryError(
+                f"{path!r} is a directory, not a robot file; pass the .urdf, "
+                ".xacro, or MJCF .xml file inside it")
+        raise FileNotFoundError(
+            f"no robot file at {path!r} (looked at {os.path.abspath(path)}); "
+            "pass a path to a .urdf, .xacro, or MJCF .xml file, or use "
+            "kinfast.load_string for text you already have")
     with open(path, "r", encoding="utf-8") as f:
         text = f.read()
     if _is_xacro(path, text):
         text = _expand_xacro(path, mappings)
-    return load_string(text, ee_link=ee_link, dtype=dtype)
+    return load_string(text, ee_link=ee_link, dtype=dtype,
+                       base_dir=os.path.dirname(os.path.abspath(path)))
 
 
-def load_string(text, ee_link=None, dtype=torch.float32):
-    """Same as `load`, from URDF/MJCF text already in memory."""
+def load_string(text, ee_link=None, dtype=torch.float32, base_dir=None):
+    """Same as `load`, from URDF/MJCF text already in memory. `base_dir` is the
+    directory MJCF <include> paths resolve against; kinfast.load fills it in
+    from the file's path."""
     if _sniff(text) == "mjcf":
         from kinfast.mjcf.parse import parse_mjcf_string
-        return Robot.from_ir(parse_mjcf_string(text), ee_link=ee_link,
-                             dtype=dtype)
+        return Robot.from_ir(parse_mjcf_string(text, base_dir=base_dir),
+                             ee_link=ee_link, dtype=dtype)
     return Robot.from_ir(parse_urdf_string(text), ee_link=ee_link, dtype=dtype)
