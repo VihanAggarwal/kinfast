@@ -12,6 +12,12 @@ from kinfast import dynamics as _dyn
 
 
 class Robot:
+    """Loaded robot. The dtype of the q you pass decides the working dtype of
+    every method (fk, jacobian, ik, dynamics, collision): the compiled chain's
+    constants are cast to it, so a robot compiled as float32 takes float64 q
+    and returns float64 results. Velocities, accelerations, torques, and IK
+    targets are coerced to the dtype of q (or of the target when q is absent)."""
+
     def __init__(self, chain, ee_link=None, ir=None):
         self.chain = chain
         self.ir = ir                      # the parsed model, kept for export
@@ -60,12 +66,16 @@ class Robot:
         return self.chain.link_index[name]
 
     # ---- kinematics ----
-    def random_configs(self, n):
-        """Uniform random configurations inside the joint limits. Revolute
-        joints with infinite limits are sampled over a full turn; prismatic
-        joints with infinite limits raise ValueError."""
+    def random_configs(self, n, dtype=None):
+        """Uniform random configurations inside the joint limits, (n, dof).
+        Revolute joints with infinite limits are sampled over a full turn;
+        prismatic joints with infinite limits raise ValueError. dtype
+        defaults to the chain's compiled dtype."""
         lo, hi = sampling_bounds(self.chain)
-        return lo + (hi - lo) * torch.rand(n, self.dof, device=self.device)
+        if dtype is not None:
+            lo, hi = lo.to(dtype), hi.to(dtype)
+        return lo + (hi - lo) * torch.rand(n, self.dof, dtype=lo.dtype,
+                                           device=self.device)
 
     def fk_all(self, q):
         return forward_kinematics(self.chain, q)
@@ -81,7 +91,9 @@ class Robot:
     def ik(self, target, q0=None, link=None, **kw):
         idx = self.link_id(link) if link else self.link_id(self.ee_link)
         if q0 is None and kw.get("restarts", 1) <= 1:
-            q0 = self.random_configs(target.shape[0])
+            # seed in the target's dtype: the chain may be float32 while the
+            # caller works in float64 (or the other way round)
+            q0 = self.random_configs(target.shape[0], dtype=target.dtype)
         return _ik(self.chain, target, q0, idx, **kw)
 
     # ---- dynamics ----
@@ -138,11 +150,14 @@ class Robot:
         """Time-optimal synchronized trapezoidal move under the URDF's velocity
         limits (joints with no declared limit fall back to 1 rad/s)."""
         from kinfast.trajectory import trapezoidal
-        vmax = self.chain.vmax.clone()
+        vmax = self.chain.vmax.to(device=q0.device, dtype=q0.dtype).clone()
         vmax[vmax <= 0] = 1.0
         if amax is None:
             amax = torch.full_like(vmax, 4.0)
-        return trapezoidal(q0, qf, vmax, amax, n=n)
+        else:
+            amax = torch.as_tensor(amax, dtype=q0.dtype, device=q0.device)
+        return trapezoidal(q0, qf.to(device=q0.device, dtype=q0.dtype),
+                           vmax, amax, n=n)
 
     # ---- collision ----
     def sphere_model(self, spheres):

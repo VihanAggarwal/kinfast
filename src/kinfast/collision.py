@@ -32,7 +32,9 @@ class SphereModel:
         """World-frame sphere centers for batch q. -> (B, S, 3)."""
         world = forward_kinematics(self.chain, q)            # (B, n_links, 4, 4)
         ones = torch.ones(self.n, 1, dtype=q.dtype, device=q.device)
-        local_h = torch.cat([self.local.to(q.device), ones], dim=-1)  # (S,4)
+        # q fixes the working dtype (as in fk); the stored centers follow it
+        local = self.local.to(device=q.device, dtype=q.dtype)
+        local_h = torch.cat([local, ones], dim=-1)            # (S,4)
         Tl = world[:, self.link.to(q.device)]                # (B, S, 4, 4)
         return torch.einsum("bsij,sj->bsi", Tl, local_h)[:, :, :3]
 
@@ -60,7 +62,7 @@ def self_distance(model: SphereModel, q: torch.Tensor) -> torch.Tensor:
     Negative means the robot is in self-collision at that configuration.
     """
     C = model.centers_world(q)                               # (B,S,3)
-    r = model.radius.to(q.device)
+    r = model.radius.to(device=q.device, dtype=q.dtype)
     dist = (C[:, :, None, :] - C[:, None, :, :]).norm(dim=-1)  # (B,S,S)
     sd = dist - r[None, :, None] - r[None, None, :]
     allowed = model._allowed_pairs().to(q.device)
@@ -76,9 +78,9 @@ def distance_to_obstacles(model: SphereModel, q: torch.Tensor,
     obs_centers (M,3), obs_radii (M,). Negative means collision with an obstacle.
     """
     C = model.centers_world(q)                               # (B,S,3)
-    r = model.radius.to(q.device)
-    oc = obs_centers.to(q.device)                            # (M,3)
-    orad = obs_radii.to(q.device)                            # (M,)
+    r = model.radius.to(device=q.device, dtype=q.dtype)
+    oc = obs_centers.to(device=q.device, dtype=q.dtype)      # (M,3)
+    orad = obs_radii.to(device=q.device, dtype=q.dtype)      # (M,)
     dist = (C[:, :, None, :] - oc[None, None, :, :]).norm(dim=-1)  # (B,S,M)
     sd = dist - r[None, :, None] - orad[None, None, :]
     return sd.reshape(q.shape[0], -1).min(dim=1).values
@@ -107,7 +109,9 @@ def collision_aware_ik(model: SphereModel, target_pos: torch.Tensor,
     the best by `info["pos_error"]`/`info["clearance"]`. Returns (q (B,dof), info).
     """
     chain = model.chain
-    lo, hi = chain.lower.to(q0.device), chain.upper.to(q0.device)
+    lo = chain.lower.to(device=q0.device, dtype=q0.dtype)
+    hi = chain.upper.to(device=q0.device, dtype=q0.dtype)
+    target_pos = target_pos.to(device=q0.device, dtype=q0.dtype)
     g = torch.Generator(device="cpu").manual_seed(seed)
     noise = torch.randn(q0.shape, generator=g, dtype=q0.dtype).to(q0.device)
     q = (q0.clone() + jitter * noise).requires_grad_(True)

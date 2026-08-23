@@ -38,7 +38,7 @@ def computed_torque(chain, q, qd, q_des, qd_des, qdd_des, kp, kd):
     """Feedback linearization: tau = M(q) v + c(q,qd) + g(q) with
     v = qdd_des + kp e + kd de. Closed-loop error obeys e'' + kd e' + kp e = 0."""
     kp, kd = _gain(kp, q), _gain(kd, q)
-    v = qdd_des + kp * (q_des - q) + kd * (qd_des - qd)
+    v = (qdd_des + kp * (q_des - q) + kd * (qd_des - qd)).to(q.dtype)
     M = D.mass_matrix(chain, q)
     return (M @ v.unsqueeze(-1)).squeeze(-1) + D.coriolis(chain, q, qd) + D.gravity(chain, q)
 
@@ -89,7 +89,8 @@ def simulate(chain, q0, qd0, controller, dt: float, steps: int,
         raise ValueError(f"steps must be >= 1, got {steps}")
     if record_every < 1:
         raise ValueError(f"record_every must be >= 1, got {record_every}")
-    q, qd = q0.clone(), qd0.clone()
+    q = q0.clone()
+    qd = qd0.to(device=q0.device, dtype=q0.dtype).clone()
     ts, qs, qds = [], [], []
     for k in range(steps):
         t = k * dt

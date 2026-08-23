@@ -97,7 +97,8 @@ def condition_number(chain, q, link_index, translational: bool = True,
 def joint_limit_margin(chain, q):
     """Min over joints of normalized distance to the nearest limit. (B,).
     1 = every joint mid-range, 0 = some joint sitting on a limit."""
-    lo, hi = chain.lower.to(q.device), chain.upper.to(q.device)
+    lo = chain.lower.to(device=q.device, dtype=q.dtype)
+    hi = chain.upper.to(device=q.device, dtype=q.dtype)
     span = (hi - lo).clamp_min(1e-12)
     d = torch.minimum(q - lo, hi - q) / (0.5 * span)
     # An unbounded joint (inf or NaN limit) has no mid-range to normalize

@@ -21,7 +21,11 @@ def _solve_from_seed(chain, target, q0, link_index, iters, damping, step,
     """Core DLS iteration from a given seed. Returns (q, final_error)."""
     device, dtype = q0.device, q0.dtype
     q = q0.clone()
-    lo, hi = chain.lower.to(device), chain.upper.to(device)
+    # the seed fixes the working dtype; limits and target follow it (clamp
+    # would otherwise silently promote q to the limits' dtype mid-loop)
+    lo = chain.lower.to(device=device, dtype=dtype)
+    hi = chain.upper.to(device=device, dtype=dtype)
+    target = target.to(device=device, dtype=dtype)
     m = 3 if pos_only else 6
     eye = torch.eye(m, dtype=dtype, device=device)
     lam2 = damping * damping
@@ -64,8 +68,14 @@ def ik(chain: CompiledChain, target: torch.Tensor, q0: torch.Tensor = None,
     q0 is used only when restarts==1; if q0 is None a single random seed is drawn.
     """
     B = target.shape[0]
-    device, dtype = target.device, target.dtype
-    lo, hi = chain.lower.to(device), chain.upper.to(device)
+    # working dtype: the caller's q0 when given, else the target's. The chain
+    # may have been compiled in either precision; its constants get cast.
+    if q0 is not None and restarts <= 1:
+        device, dtype = q0.device, q0.dtype
+    else:
+        device, dtype = target.device, target.dtype
+    lo = chain.lower.to(device=device, dtype=dtype)
+    hi = chain.upper.to(device=device, dtype=dtype)
 
     def _sample(n):
         return lo + (hi - lo) * torch.rand(n, chain.dof, dtype=dtype, device=device)

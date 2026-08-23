@@ -153,10 +153,17 @@ def coriolis(chain: CompiledChain, q: torch.Tensor, qd: torch.Tensor) -> torch.T
     return out if needs_graph else out.detach()
 
 
+def _like_q(x, q):
+    """Bring a velocity/acceleration/torque tensor onto q's dtype and device.
+    q fixes the working dtype; the others follow it instead of crashing
+    inside matmul/solve on a mismatch."""
+    return x.to(device=q.device, dtype=q.dtype)
+
+
 def inverse_dynamics(chain, q, qd, qdd, use_gravity=True):
     """tau to realize (q,qd,qdd). (B,dof)."""
+    qd, qdd = _like_q(qd, q), _like_q(qdd, q)
     M = mass_matrix(chain, q)
-    qdd = qdd.to(dtype=q.dtype, device=q.device)
     tau = (M @ qdd.unsqueeze(-1)).squeeze(-1) + coriolis(chain, q, qd)
     if use_gravity:
         tau = tau + gravity(chain, q)
@@ -165,8 +172,8 @@ def inverse_dynamics(chain, q, qd, qdd, use_gravity=True):
 
 def forward_dynamics(chain, q, qd, tau, use_gravity=True):
     """qdd produced by tau at state (q,qd). (B,dof)."""
+    qd, tau = _like_q(qd, q), _like_q(tau, q)
     M = mass_matrix(chain, q)
-    tau = tau.to(dtype=q.dtype, device=q.device)
     bias = coriolis(chain, q, qd)
     if use_gravity:
         bias = bias + gravity(chain, q)
