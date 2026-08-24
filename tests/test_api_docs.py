@@ -166,3 +166,21 @@ def test_checked_in_api_md_is_current(gen, capsys):
     """docs/API.md is committed, so it has to match the code it describes."""
     assert gen.main(["--check"]) == 0, "run: python docs/gen_api.py"
     capsys.readouterr()
+
+
+def test_optional_is_normalized_so_the_doc_matches_on_every_python(gen, doc):
+    """Python 3.10 renders Optional[str], 3.12 and later render str | None.
+    The reference is committed and checked by test_checked_in_api_md_is_current,
+    so it has to look the same whichever interpreter generated it. Everything is
+    normalized to the modern spelling, with brackets matched so nested
+    annotations survive."""
+    assert gen._normalize_optional("(a: Optional[str] = None)") == "(a: str | None = None)"
+    # nested generics keep their inner brackets
+    assert (gen._normalize_optional("(a: Optional[Dict[str, int]] = None)")
+            == "(a: Dict[str, int] | None = None)")
+    # more than one on a line, and already-modern text is left alone
+    assert (gen._normalize_optional("(a: Optional[int] = 1, b: Optional[str] = None)")
+            == "(a: int | None = 1, b: str | None = None)")
+    assert gen._normalize_optional("(a: str | None = None)") == "(a: str | None = None)"
+    # and the generated reference itself carries no old-style spelling
+    assert "Optional[" not in doc

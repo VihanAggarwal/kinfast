@@ -54,6 +54,29 @@ def _prefer_checkout():
 _prefer_checkout()
 
 
+def _normalize_optional(text):
+    """Rewrite `Optional[X]` as `X | None`.
+
+    Python renders the same annotation differently by version: 3.10 prints
+    `Optional[str]`, 3.12 and later print `str | None`. The reference is
+    checked in and verified by a test, so a doc generated on one interpreter
+    must match one generated on another. Everything is normalized to the
+    modern spelling. Brackets are matched rather than pattern-matched so a
+    nested annotation like Optional[Dict[str, int]] survives intact.
+    """
+    tag = "Optional["
+    while (i := text.find(tag)) != -1:
+        depth, j = 1, i + len(tag)
+        while j < len(text) and depth:
+            depth += (text[j] == "[") - (text[j] == "]")
+            j += 1
+        if depth:                      # unbalanced, leave the text alone
+            break
+        inner = text[i + len(tag):j - 1]
+        text = text[:i] + inner + " | None" + text[j:]
+    return text
+
+
 def _first_paragraph(obj):
     """Return the first paragraph of an object's docstring as a single line.
 
@@ -102,7 +125,7 @@ def _signature(obj, drop_self=False):
         params = list(sig.parameters.values())
         if params and params[0].name in ("self", "cls"):
             sig = sig.replace(parameters=params[1:])
-    return str(sig)
+    return _normalize_optional(str(sig))
 
 
 def _class_signature(cls):
