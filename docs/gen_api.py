@@ -55,26 +55,71 @@ _prefer_checkout()
 
 
 def _normalize_optional(text):
-    """Rewrite `Optional[X]` as `X | None`.
+    """Rewrite the annotation `Optional[X]` as `X | None`.
 
     Python renders the same annotation differently by version: 3.10 prints
     `Optional[str]`, 3.12 and later print `str | None`. The reference is
-    checked in and verified by a test, so a doc generated on one interpreter
-    must match one generated on another. Everything is normalized to the
-    modern spelling. Brackets are matched rather than pattern-matched so a
-    nested annotation like Optional[Dict[str, int]] survives intact.
+    committed and verified by a test, so a doc generated on one interpreter
+    has to match one generated on another, and everything is normalized to the
+    modern spelling.
+
+    Only text outside string literals is touched. A default value such as
+    `mode: str = "Optional[str]"` is a string the caller really passes, not an
+    annotation, and rewriting it would document the wrong value. Brackets are
+    matched rather than pattern-matched, so a nested annotation like
+    `Optional[Dict[str, int]]` survives intact.
     """
     tag = "Optional["
-    while (i := text.find(tag)) != -1:
-        depth, j = 1, i + len(tag)
-        while j < len(text) and depth:
-            depth += (text[j] == "[") - (text[j] == "]")
-            j += 1
-        if depth:                      # unbalanced, leave the text alone
-            break
-        inner = text[i + len(tag):j - 1]
-        text = text[:i] + inner + " | None" + text[j:]
-    return text
+    out, i, quote = [], 0, ""
+    while i < len(text):
+        ch = text[i]
+        if quote:                       # inside a string literal: copy verbatim
+            out.append(ch)
+            if ch == quote:
+                quote = ""
+            i += 1
+            continue
+        if ch in "\"'":
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        if text.startswith(tag, i):
+            end = _match_bracket(text, i + len(tag) - 1)
+            if end is None:             # unbalanced, leave the rest alone
+                out.append(text[i:])
+                break
+            inner = _normalize_optional(text[i + len(tag):end])
+            out.append(inner + " | None")
+            i = end + 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _match_bracket(text, open_index):
+    """Index of the `]` closing the `[` at `open_index`, or None if unbalanced.
+
+    Brackets inside string literals do not count, so `Literal["a]b"]` closes
+    where a reader would expect it to.
+    """
+    depth, quote, i = 0, "", open_index
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == quote:
+                quote = ""
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return None
 
 
 def _first_paragraph(obj):

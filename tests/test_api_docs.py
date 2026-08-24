@@ -182,5 +182,18 @@ def test_optional_is_normalized_so_the_doc_matches_on_every_python(gen, doc):
     assert (gen._normalize_optional("(a: Optional[int] = 1, b: Optional[str] = None)")
             == "(a: int | None = 1, b: str | None = None)")
     assert gen._normalize_optional("(a: str | None = None)") == "(a: str | None = None)"
-    # and the generated reference itself carries no old-style spelling
+
+    # A string a caller really passes is a value, not an annotation. Rewriting
+    # it would document the wrong default, so quoted text is left alone even
+    # when it spells Optional[...] or hides a bracket.
+    assert (gen._normalize_optional("(mode: str = 'Optional[str]', x: Optional[int] = 1)")
+            == "(mode: str = 'Optional[str]', x: int | None = 1)")
+    assert (gen._normalize_optional('(m: Literal["Optional[int]", "plain"] = "plain")')
+            == '(m: Literal["Optional[int]", "plain"] = "plain")')
+    assert (gen._normalize_optional("(sep: str = 'a]b', z: Optional[str] = None)")
+            == "(sep: str = 'a]b', z: str | None = None)")
+    # rewriting twice changes nothing
+    once = gen._normalize_optional("(a: Optional[str] = None)")
+    assert gen._normalize_optional(once) == once
+    # and the generated reference itself carries no old-style annotation
     assert "Optional[" not in doc
