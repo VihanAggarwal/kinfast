@@ -315,12 +315,29 @@ def main(argv=None):
         current = path.read_text(encoding="utf-8") if path.exists() else ""
         if current != text:
             print(f"{path} is out of date, run: python docs/gen_api.py")
+            # Say what differs. A stale reference is usually one renamed symbol,
+            # and printing the diff turns a red CI run into an actionable one
+            # instead of a puzzle about someone else's machine.
+            import difflib
+            diff = difflib.unified_diff(
+                current.splitlines(), text.splitlines(),
+                fromfile=f"{path.name} (on disk)", tofile="regenerated",
+                lineterm="", n=1)
+            for i, line in enumerate(diff):
+                if i >= 60:
+                    print("... (diff truncated)")
+                    break
+                print(line)
             return 1
         print(f"{path} is up to date")
         return 0
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    # newline="" keeps the newlines this renderer emits, so a file written on
+    # Windows is byte-identical to one written on Linux and --check cannot
+    # fail for a reason as uninteresting as line endings
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
     print(f"wrote {path} ({len(text.splitlines())} lines)")
     return 0
 
