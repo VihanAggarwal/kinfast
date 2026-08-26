@@ -231,6 +231,22 @@ def test_gradient_matches_central_differences():
     assert torch.allclose(got, fd, atol=1e-8), (got - fd).abs().max()
 
 
+def test_no_grad_passthrough_does_not_leak_a_cat_node():
+    """Regression: the stitching must happen under no_grad too.
+
+    A function that hands back one of its inputs untouched used to come out of
+    the chunked call wearing a CatBackward node, because the concatenation ran
+    after the no_grad block had closed. Slicing a leaf under no_grad still
+    yields a view that requires grad, so the later cat was recorded.
+    """
+    x = torch.ones(4, 1, dtype=torch.float64, requires_grad=True)
+    out = map_in_chunks(lambda t: t, x, 2, no_grad=True)
+    assert out.grad_fn is None
+    assert not out.requires_grad
+    q, info = map_in_chunks(lambda t: (t, {"e": t * 3.0}), x, 3, no_grad=True)
+    assert q.grad_fn is None and info["e"].grad_fn is None
+
+
 def test_no_grad_inside_an_enabled_context_only_affects_the_call():
     x = torch.ones(4, 1, requires_grad=True)
     out = map_in_chunks(lambda t: t * 2.0, x, 2, no_grad=True)

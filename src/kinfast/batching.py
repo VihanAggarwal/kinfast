@@ -158,7 +158,11 @@ def map_in_chunks(fn, tensors, chunk, no_grad: bool = False):
             stop = min(start + chunk, B)
             sliced = tuple(None if t is None else t[start:stop] for t in tensors)
             parts.append(fn(*sliced))
-    return _combine(parts)
+        # The stitching stays inside the grad mode on purpose. A function that
+        # returns one of its inputs unchanged would otherwise have its pieces
+        # concatenated with autograd on, and no_grad=True would hand back a
+        # tensor carrying a CatBackward node it promised not to build.
+        return _combine(parts)
 
 
 def ik_chunked(chain: CompiledChain, target: torch.Tensor, chunk,
@@ -177,6 +181,10 @@ def ik_chunked(chain: CompiledChain, target: torch.Tensor, chunk,
     inside each chunk and the random draws land differently, so the results are
     statistically the same but not bitwise identical. Pass q0 (or accept the
     difference) if that matters.
+
+    Budget note for restarts>1: ik tiles each target that many times, so a
+    chunk of size c is solved as c*restarts rows. Divide the chunk you can
+    afford by the restart count.
 
     One more source of difference: ik's early exit fires when every row in the
     call is inside tol, so a chunk of easy targets can stop sooner than the
