@@ -203,5 +203,17 @@ def test_optional_is_normalized_so_the_doc_matches_on_every_python(gen, doc):
     # rewriting twice changes nothing
     once = gen._normalize_optional("(a: Optional[str] = None)")
     assert gen._normalize_optional(once) == once
+    # Union is the same problem with a different spelling: 3.12 prints
+    # Union[A, B] where 3.13 and later print A | B, and the arguments have to
+    # be split on the commas that belong to this bracket level only.
+    assert gen._normalize_annotations("Union[A, B]") == "A | B"
+    assert (gen._normalize_annotations("Union[int, Dict[str, int]]")
+            == "int | Dict[str, int]")
+    assert gen._normalize_annotations("List[Union[A, B]]") == "List[A | B]"
+    assert (gen._normalize_annotations("Union[A, Iterable[Union[A, B]]]")
+            == "A | Iterable[A | B]")
+    assert (gen._normalize_annotations("(m: str = 'Union[a, b]', x: Optional[int] = 1)")
+            == "(m: str = 'Union[a, b]', x: int | None = 1)")
     # and the generated reference itself carries no old-style annotation
     assert "Optional[" not in doc
+    assert "Union[" not in doc

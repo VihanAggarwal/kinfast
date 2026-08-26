@@ -54,22 +54,47 @@ def _prefer_checkout():
 _prefer_checkout()
 
 
-def _normalize_optional(text):
-    """Rewrite the annotation `Optional[X]` as `X | None`.
+def _split_top_level(text):
+    """Split on the commas that belong to this bracket level.
 
-    Python renders the same annotation differently by version: 3.10 prints
-    `Optional[str]`, 3.12 and later print `str | None`. The reference is
-    committed and verified by a test, so a doc generated on one interpreter
-    has to match one generated on another, and everything is normalized to the
-    modern spelling.
+    `Union[A, Dict[str, int]]` has two arguments, not three: the comma inside
+    Dict belongs to Dict. Quotes are skipped for the same reason brackets are.
+    """
+    parts, depth, quote, start = [], 0, "", 0
+    for i, ch in enumerate(text):
+        if quote:
+            if ch == quote:
+                quote = ""
+        elif ch in "\"'":
+            quote = ch
+        elif ch in "[(":
+            depth += 1
+        elif ch in "])":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            parts.append(text[start:i])
+            start = i + 1
+    parts.append(text[start:])
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _normalize_annotations(text):
+    """Write `Optional[X]` and `Union[A, B]` the modern way, as `X | None`
+    and `A | B`.
+
+    Python renders the same annotation differently by version. 3.10 and 3.12
+    print `Optional[str]` and `Union[int, str]`; 3.13 and later print
+    `str | None` and `int | str`. The reference is committed and verified by a
+    test, so a doc generated on one interpreter has to match one generated on
+    another, and the modern spelling is the one everything is normalized to.
 
     Only text outside string literals is touched. A default value such as
     `mode: str = "Optional[str]"` is a string the caller really passes, not an
     annotation, and rewriting it would document the wrong value. Brackets are
     matched rather than pattern-matched, so a nested annotation like
-    `Optional[Dict[str, int]]` survives intact.
+    `Union[int, Dict[str, int]]` survives intact.
     """
-    tag = "Optional["
+    tags = ("Optional[", "Union[")
     out, i, quote = [], 0, ""
     while i < len(text):
         ch = text[i]
@@ -84,18 +109,26 @@ def _normalize_optional(text):
             out.append(ch)
             i += 1
             continue
-        if text.startswith(tag, i):
+        tag = next((t for t in tags if text.startswith(t, i)), None)
+        if tag:
             end = _match_bracket(text, i + len(tag) - 1)
             if end is None:             # unbalanced, leave the rest alone
                 out.append(text[i:])
                 break
-            inner = _normalize_optional(text[i + len(tag):end])
-            out.append(inner + " | None")
+            inner = text[i + len(tag):end]
+            parts = [_normalize_annotations(p) for p in _split_top_level(inner)]
+            if tag == "Optional[":
+                parts.append("None")
+            out.append(" | ".join(parts) if parts else "None")
             i = end + 1
             continue
         out.append(ch)
         i += 1
     return "".join(out)
+
+
+# the old name, kept because it reads well at the call site
+_normalize_optional = _normalize_annotations
 
 
 def _match_bracket(text, open_index):
