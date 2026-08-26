@@ -44,12 +44,18 @@ from kinfast import analysis
 
 REPO = Path(__file__).resolve().parent.parent.parent
 
-INK = "#e6ebf2"
-DIM = "#8b97a8"
-ACCENT = "#55d6c2"
-WARM = "#ffb454"
-BG = "#0f1219"
-PANEL = "#161b24"
+# The palette is a terminal's: the sixteen ANSI colours as Windows Terminal and
+# VS Code render them, on the same near black a console uses. A tool that lives
+# next to a prompt may as well look like it does.
+BG = "#0c0c0c"          # ANSI black, the console background
+PANEL = "#101010"       # a hair lighter, so a plot reads as a pane
+INK = "#cccccc"         # ANSI white
+DIM = "#767676"         # ANSI bright black, for labels and axes
+ACCENT = "#16c60c"      # bright green, the colour a terminal says "ok" in
+WARM = "#f9f1a5"        # bright yellow, the second series
+ALERT = "#e74856"       # bright red, for the thing you are avoiding
+COOL = "#61d6d6"        # bright cyan, for paths and extra series
+GRID = "#2a2a2a"
 
 
 def find_robots():
@@ -140,8 +146,8 @@ def _style_axes(ax, title):
     ax.set_title(title, color=INK, fontsize=9.5, loc="left", pad=6)
     ax.tick_params(colors=DIM, labelsize=7.5)
     for s in ax.spines.values():
-        s.set_color("#232a36")
-    ax.grid(True, color="#232a36", linewidth=0.6, alpha=0.8)
+        s.set_color(GRID)
+    ax.grid(True, color=GRID, linewidth=0.6, alpha=0.9)
 
 
 class Studio:
@@ -150,6 +156,12 @@ class Studio:
     def __init__(self, robot, name):
         import matplotlib.pyplot as plt
         from matplotlib.widgets import Button, Slider
+
+        # a console font, with a stack that degrades sensibly off Windows
+        plt.rcParams["font.family"] = "monospace"
+        plt.rcParams["font.monospace"] = [
+            "Cascadia Mono", "Consolas", "DejaVu Sans Mono", "Menlo",
+            "Liberation Mono", "monospace"]
 
         self.plt = plt
         self.robot = robot
@@ -160,18 +172,21 @@ class Studio:
         self.fig = plt.figure(figsize=(15, 8.6), facecolor=BG)
         self.fig.canvas.manager.set_window_title(f"kinfast studio - {name}")
         gs = self.fig.add_gridspec(
-            3, 2, width_ratios=[1.35, 1], height_ratios=[1, 1, 1],
-            left=0.03, right=0.97, top=0.93, bottom=0.30, wspace=0.18, hspace=0.55)
+            4, 2, width_ratios=[1.35, 1], height_ratios=[1, 1, 1, 1],
+            left=0.03, right=0.97, top=0.93, bottom=0.30, wspace=0.18, hspace=0.75)
 
         self.ax3d = self.fig.add_subplot(gs[:, 0], projection="3d")
         self.ax_thr = self.fig.add_subplot(gs[0, 1])
         self.ax_lat = self.fig.add_subplot(gs[1, 1])
         self.ax_ik = self.fig.add_subplot(gs[2, 1])
-        for ax, t in ((self.ax_thr, "throughput against batch size"),
-                      (self.ax_lat, "single query latency"),
-                      (self.ax_ik, "inverse kinematics against restarts")):
+        self.ax_plan = self.fig.add_subplot(gs[3, 1])
+        for ax, t, hint in (
+                (self.ax_thr, "throughput against batch size", "run benchmarks"),
+                (self.ax_lat, "single query latency", "run benchmarks"),
+                (self.ax_ik, "inverse kinematics against restarts", "run benchmarks"),
+                (self.ax_plan, "planned motion", "plan around an obstacle")):
             _style_axes(ax, t)
-            ax.text(0.5, 0.5, "press  run benchmarks", color=DIM, fontsize=9,
+            ax.text(0.5, 0.5, f"press  {hint}", color=DIM, fontsize=9,
                     ha="center", va="center", transform=ax.transAxes)
 
         self.fig.text(0.03, 0.965, "kinfast studio", color=INK, fontsize=15,
@@ -199,20 +214,21 @@ class Studio:
             self.sliders.append(s)
 
         def button(x, label, cb, color=PANEL):
-            ax = self.fig.add_axes([x, 0.035, 0.135, 0.042])
-            b = Button(ax, label, color=color, hovercolor="#232b38")
+            ax = self.fig.add_axes([x, 0.035, 0.122, 0.042])
+            b = Button(ax, label, color=color, hovercolor="#1f1f1f")
             b.label.set_color(INK)
             b.label.set_fontsize(9)
             b.on_clicked(cb)
             return b
 
         self.buttons = [
-            button(0.06, "home", self._home),
-            button(0.205, "random pose", self._random),
-            button(0.35, "solve ik", self._solve),
-            button(0.495, "workspace", self._workspace),
-            button(0.64, "run benchmarks", self._run_bench),
-            button(0.785, "save png", self._save),
+            button(0.045, "home", self._home),
+            button(0.175, "random pose", self._random),
+            button(0.305, "solve ik", self._solve),
+            button(0.435, "plan around", self._plan),
+            button(0.565, "workspace", self._workspace),
+            button(0.695, "run benchmarks", self._run_bench),
+            button(0.825, "save png", self._save),
         ]
         self._draw_robot()
 
@@ -254,6 +270,101 @@ class Studio:
         self._say(f"workspace: reach {float(ws['min_reach']):.2f} to "
                   f"{float(ws['max_reach']):.2f} m, 6000 samples")
 
+    def _spheres(self):
+        """Collision spheres for this robot, however we can get them.
+
+        A model that ships collision primitives gets real ones. A model that
+        ships only meshes, or nothing, gets one sphere per link sized to the
+        gap between links, which is enough for a planner to have something to
+        keep out of an obstacle.
+        """
+        if getattr(self, "_sphere_cache", None) is not None:
+            return self._sphere_cache
+        model = None
+        try:
+            from kinfast.collision_auto import auto_sphere_model
+            model = auto_sphere_model(self.robot.ir, self.robot.chain)
+            if getattr(model, "n", 0) == 0:
+                model = None
+        except Exception:
+            model = None
+        if model is None:
+            P = self.robot.fk_all(torch.zeros(1, self.robot.dof))[0, :, :3, 3]
+            span = float((P.max(dim=0).values - P.min(dim=0).values).max())
+            r = max(span * 0.06, 0.01)
+            model = self.robot.sphere_model(
+                {i: [(0.0, 0.0, 0.0, r)] for i in range(self.robot.n_links)})
+        self._sphere_cache = model
+        return model
+
+    def _plan(self, _):
+        """Put an obstacle on the straight line and plan around it.
+
+        The obstacle goes where the tool would pass if the arm simply
+        interpolated from start to goal, so the direct move is always blocked
+        and the planner always has real work to do.
+        """
+        from kinfast.collision_world import Sphere
+        from kinfast.planning import CollisionChecker, rrt_connect
+
+        start = self.q[0].clone()
+        goal = self.robot.random_configs(1)[0]
+        mid = ((start + goal) / 2).unsqueeze(0)
+        hit = self.robot.fk(mid)[0, :3, 3]
+        reach = float(self.robot.fk(self.q)[0, :3, 3].norm()) or 1.0
+        radius = max(reach * 0.16, 0.04)
+        world = [Sphere(center=hit.tolist(), radius=radius)]
+
+        checker = CollisionChecker(self.robot, self._spheres(), world,
+                                   self_collision=False)
+        if not bool(checker(torch.stack([start, goal])).all()):
+            self._say("start or goal is inside the obstacle, press again")
+            return
+        self._say("planning...")
+        plan = rrt_connect(self.robot.chain, start, goal, checker,
+                           seed=int(time.time()) % 10000, max_iters=4000)
+        self.obstacle = (hit.tolist(), radius)
+        print(plan.stats)
+        if not plan.solved:
+            self.plan = None
+            self._draw_robot()
+            self._say(str(plan.stats))
+            return
+        self.plan = plan
+        self._draw_plan_panel(plan)
+        self._animate(plan)
+        self._say(str(plan.stats))
+
+    def _animate(self, plan):
+        """Walk the arm along the planned path so the motion is visible."""
+        _t, q, _qd, _qdd, _T = plan.to_trajectory(self.robot)
+        keep = max(int(q.shape[0] // 60), 1)
+        interactive = self.plt.get_backend().lower() not in ("agg", "pdf", "svg", "ps")
+        for row in q[::keep]:
+            self.q = row.unsqueeze(0)
+            self._draw_robot()
+            if interactive:
+                self.plt.pause(0.001)
+        self._set_q(plan.path[-1].unsqueeze(0))
+
+    def _draw_plan_panel(self, plan):
+        """Joint angles against time: the plot a motion is actually read in."""
+        t, q, _qd, _qdd, T = plan.to_trajectory(self.robot)
+        ax = self.ax_plan
+        ax.clear()
+        _style_axes(ax, f"planned motion, {len(plan)} waypoints, {T:.2f} s")
+        colors = [ACCENT, WARM, COOL, ALERT, INK, DIM]
+        for j in range(q.shape[1]):
+            ax.plot(t, q[:, j], lw=1.5, color=colors[j % len(colors)],
+                    label=self.robot.joint_names[j][:10])
+        ax.set_xlabel("seconds", color=DIM, fontsize=8)
+        ax.set_ylabel("radians", color=DIM, fontsize=8)
+        if q.shape[1] <= 6:
+            leg = ax.legend(fontsize=6.5, facecolor=PANEL, edgecolor=GRID,
+                            labelcolor=INK, ncol=2, loc="upper right")
+            leg.get_frame().set_alpha(0.9)
+        self.fig.canvas.draw_idle()
+
     def _say(self, msg):
         self.status.set_text(f"{self.name}   {self.robot.dof} dof   "
                              f"{self.robot.n_links} links   |   {msg}")
@@ -291,7 +402,7 @@ class Studio:
         ax.loglog(b, jac, "s-", color=WARM, lw=2, ms=4, label="jacobian")
         ax.set_xlabel("configurations per call", color=DIM, fontsize=8)
         ax.set_ylabel("configurations / s", color=DIM, fontsize=8)
-        leg = ax.legend(fontsize=7.5, facecolor=PANEL, edgecolor="#232a36",
+        leg = ax.legend(fontsize=7.5, facecolor=PANEL, edgecolor=GRID,
                         labelcolor=INK)
         leg.get_frame().set_alpha(0.9)
 
@@ -325,7 +436,7 @@ class Studio:
         twin.set_ylabel("ms for 256 targets", color=WARM, fontsize=8)
         twin.tick_params(colors=DIM, labelsize=7.5)
         for s in twin.spines.values():
-            s.set_color("#232a36")
+            s.set_color(GRID)
         self.fig.canvas.draw_idle()
 
     # ---- robot
@@ -346,6 +457,20 @@ class Studio:
                        depthshade=False, zorder=5)
         except Exception:
             self._fallback_draw(ax)
+        obs = getattr(self, "obstacle", None)
+        if obs is not None:
+            (cx, cy, cz), r = obs
+            u = torch.linspace(0, 6.28318, 22)
+            v = torch.linspace(0, 3.14159, 11)
+            X = cx + r * torch.outer(torch.cos(u), torch.sin(v))
+            Y = cy + r * torch.outer(torch.sin(u), torch.sin(v))
+            Z = cz + r * torch.outer(torch.ones_like(u), torch.cos(v))
+            ax.plot_surface(X.numpy(), Y.numpy(), Z.numpy(), color=ALERT,
+                            alpha=0.20, linewidth=0, shade=False)
+        plan = getattr(self, "plan", None)
+        if plan is not None and plan.solved:
+            tool = self.robot.fk(plan.densify(0.03))[:, :3, 3].detach().numpy()
+            ax.plot(tool[:, 0], tool[:, 1], tool[:, 2], color=COOL, lw=1.5)
         cloud = getattr(self, "cloud", None)
         if cloud is not None:
             ax.scatter(cloud[:, 0], cloud[:, 1], cloud[:, 2], s=0.5,
@@ -357,7 +482,7 @@ class Studio:
                      f"({ee[0]:+.3f}, {ee[1]:+.3f}, {ee[2]:+.3f}) m",
                      color=INK, fontsize=9.5, loc="left", pad=2)
         for pane in (ax.xaxis, ax.yaxis, ax.zaxis):
-            pane.set_pane_color((0.06, 0.07, 0.10, 1.0))
+            pane.set_pane_color((0.05, 0.05, 0.05, 1.0))
             pane.label.set_color(DIM)
         ax.tick_params(colors=DIM, labelsize=7)
         self.fig.canvas.draw_idle()
@@ -370,11 +495,15 @@ class Studio:
         thing being judged here, so the box is squared off around the widest
         span and every axis gets the same range.
         """
+        import numpy as np
         P = self.robot.fk_all(self.q)[0, :, :3, 3].detach().numpy()
         cloud = getattr(self, "cloud", None)
         if cloud is not None:
-            import numpy as np
             P = np.vstack([P, cloud])
+        obs = getattr(self, "obstacle", None)
+        if obs is not None:                 # keep the obstacle inside the view
+            (cx, cy, cz), r = obs
+            P = np.vstack([P, [[cx - r, cy - r, cz - r], [cx + r, cy + r, cz + r]]])
         lo, hi = P.min(axis=0), P.max(axis=0)
         mid = (lo + hi) / 2
         span = max(float((hi - lo).max()), 0.2) * 0.62

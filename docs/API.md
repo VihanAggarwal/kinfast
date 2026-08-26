@@ -43,6 +43,7 @@ These are importable straight from `kinfast`. The second column says which modul
 - [`kinfast.lint`](#kinfastlint)
 - [`kinfast.mjcf.emit`](#kinfastmjcfemit)
 - [`kinfast.mjcf.parse`](#kinfastmjcfparse)
+- [`kinfast.planning`](#kinfastplanning)
 - [`kinfast.reachability`](#kinfastreachability)
 - [`kinfast.robot`](#kinfastrobot)
 - [`kinfast.studio`](#kinfaststudio)
@@ -755,6 +756,51 @@ Parse a useful subset of MJCF (MuJoCo XML) into the same Robot IR that URDF uses
 ### `parse_mjcf_string(text: str, base_dir: str = None) -> kinfast.ir.Robot`
 
 Parse MJCF text. `base_dir` is the directory <include file=...> paths resolve against; without it includes cannot be read and a model that has all of its bodies behind an include raises instead of coming back empty.
+
+## `kinfast.planning`
+
+Path planning in configuration space: get from one pose to another without hitting anything.
+
+### class `CollisionChecker(robot, spheres=None, world=None, margin=0.0, self_collision=True)`
+
+Says whether configurations are legal, a whole batch at a time.
+
+Methods:
+
+- `CollisionChecker.edge(a, b, resolution=0.05)`
+  True when every configuration between a and b is legal.
+
+### class `Plan(path: torch.Tensor, stats: kinfast.planning.PlanStats, chain: object = None)`
+
+A sequence of configurations from start to goal, and how it was found.
+
+Fields: `path`, `stats`, `chain`
+
+Methods:
+
+- `Plan.densify(resolution=0.05)`
+  Resample the waypoints so no two are further apart than resolution.
+- `Plan.solved` (property)
+- `Plan.to_trajectory(robot, amax=None, n=None)`
+  Time the path with the robot's own velocity limits.
+
+### class `PlanStats(solved: bool, iterations: int, nodes: int, seconds: float, edge_checks: int, configs_checked: int, raw_length: float = 0.0, length: float = 0.0)`
+
+What the planner did, so a caller can judge the answer it got.
+
+Fields: `solved`, `iterations`, `nodes`, `seconds`, `edge_checks`, `configs_checked`, `raw_length`, `length`
+
+### `plan_to_pose(robot, q_start, target, valid, ik_restarts=8, **kw)`
+
+Plan to a Cartesian pose: solve inverse kinematics, then plan to it.
+
+### `rrt_connect(chain, q_start, q_goal, valid, max_iters=3000, step=0.25, resolution=0.05, seed=0, shortcut_iters=120)`
+
+Plan from q_start to q_goal around whatever `valid` rejects.
+
+### `shortcut(chain, path, valid, iters=120, resolution=0.05, seed=0)`
+
+Replace detours with straight segments wherever the straight one is free.
 
 ## `kinfast.reachability`
 

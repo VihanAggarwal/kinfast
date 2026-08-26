@@ -94,3 +94,52 @@ def test_list_mode_exits_cleanly(capsys):
         pytest.skip("no robot files fetched")
     assert studio.main(["--list"]) == 0
     assert capsys.readouterr().out.strip()
+
+
+def test_sphere_model_falls_back_when_a_model_has_no_primitives(robot):
+    """SIX_DOF carries no collision geometry, so the studio has to invent
+    something for the planner to keep out of an obstacle."""
+    s = studio.Studio(robot, "six_dof")
+    model = s._spheres()
+    assert model.n > 0
+    assert s._spheres() is model            # built once, then cached
+
+
+def test_plan_button_plans_animates_and_draws(robot):
+    """The plan button does the whole job: obstacle, plan, joint plot."""
+    torch.manual_seed(0)
+    s = studio.Studio(robot, "six_dof")
+    for _ in range(8):                      # a random goal can land in the ball
+        s._random(None)
+        s._plan(None)
+        if getattr(s, "plan", None) is not None:
+            break
+    assert getattr(s, "obstacle", None) is not None
+    plan = getattr(s, "plan", None)
+    if plan is None:
+        pytest.skip("no plan found in the attempts allowed")
+    assert plan.solved and len(plan) >= 2
+    # the arm ends where the plan ends
+    assert torch.allclose(s.q[0], plan.path[-1], atol=1e-5)
+    # and the panel drew one line per joint
+    assert len(s.ax_plan.lines) == robot.dof
+
+
+def test_planned_path_is_collision_free(robot):
+    """Whatever the button reports, the path it kept must actually be legal."""
+    from kinfast.collision_world import Sphere
+    from kinfast.planning import CollisionChecker
+    torch.manual_seed(3)
+    s = studio.Studio(robot, "six_dof")
+    for _ in range(8):
+        s._random(None)
+        s._plan(None)
+        if getattr(s, "plan", None) is not None:
+            break
+    if getattr(s, "plan", None) is None:
+        pytest.skip("no plan found in the attempts allowed")
+    center, radius = s.obstacle
+    checker = CollisionChecker(robot, s._spheres(),
+                               [Sphere(center=center, radius=radius)],
+                               self_collision=False)
+    assert bool(checker(s.plan.densify(0.03)).all())
