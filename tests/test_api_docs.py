@@ -81,8 +81,16 @@ def test_carries_signatures_and_first_paragraphs(doc):
 def test_methods_are_listed_without_self(doc):
     assert "- `Robot.jacobian(q, link=None)`" in doc
     assert "- `Robot.dof` (property)" in doc
-    assert "(self," not in doc
-    assert "(self)" not in doc
+    # Check the signature lines, not the whole page: a docstring is allowed to
+    # mention self in prose, and one of them describes a shape as
+    # "(B, len(self), 4, 4)". Signatures are the bullet lines and the class
+    # headings, so only those are searched.
+    sig_lines = [ln for ln in doc.splitlines()
+                 if ln.startswith("- `") or ln.startswith("### class `")]
+    assert sig_lines, "no signatures in the reference"
+    leaked = [ln for ln in sig_lines if "(self," in ln or "(self)" in ln
+              or "(cls," in ln or "(cls)" in ln]
+    assert not leaked, leaked[:3]
     # from_ir is a classmethod; cls is dropped the same way self is. The rest
     # of the signature is not pinned here, so adding a keyword (dtype, say)
     # does not break the test that only cares about cls.

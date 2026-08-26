@@ -16,27 +16,43 @@ These are importable straight from `kinfast`. The second column says which modul
 ## Modules
 
 - [`kinfast`](#kinfast)
+- [`kinfast.acm`](#kinfastacm)
 - [`kinfast.analysis`](#kinfastanalysis)
+- [`kinfast.analysis_ext`](#kinfastanalysis_ext)
 - [`kinfast.batching`](#kinfastbatching)
 - [`kinfast.codegen`](#kinfastcodegen)
 - [`kinfast.collision`](#kinfastcollision)
+- [`kinfast.collision_auto`](#kinfastcollision_auto)
+- [`kinfast.collision_world`](#kinfastcollision_world)
 - [`kinfast.com`](#kinfastcom)
 - [`kinfast.compile`](#kinfastcompile)
+- [`kinfast.config`](#kinfastconfig)
 - [`kinfast.control`](#kinfastcontrol)
+- [`kinfast.control_task`](#kinfastcontrol_task)
 - [`kinfast.dynamics`](#kinfastdynamics)
+- [`kinfast.dynamics_rnea`](#kinfastdynamics_rnea)
 - [`kinfast.fk`](#kinfastfk)
+- [`kinfast.fk_subset`](#kinfastfk_subset)
+- [`kinfast.floating`](#kinfastfloating)
 - [`kinfast.ik`](#kinfastik)
+- [`kinfast.ik_ccd`](#kinfastik_ccd)
 - [`kinfast.ik_task`](#kinfastik_task)
+- [`kinfast.inertia`](#kinfastinertia)
 - [`kinfast.ir`](#kinfastir)
 - [`kinfast.jacobian`](#kinfastjacobian)
 - [`kinfast.lint`](#kinfastlint)
 - [`kinfast.mjcf.emit`](#kinfastmjcfemit)
 - [`kinfast.mjcf.parse`](#kinfastmjcfparse)
+- [`kinfast.reachability`](#kinfastreachability)
 - [`kinfast.robot`](#kinfastrobot)
+- [`kinfast.studio`](#kinfaststudio)
+- [`kinfast.summary`](#kinfastsummary)
 - [`kinfast.trajectory`](#kinfasttrajectory)
+- [`kinfast.trajectory_spline`](#kinfasttrajectory_spline)
 - [`kinfast.transforms`](#kinfasttransforms)
 - [`kinfast.urdf.parse`](#kinfasturdfparse)
 - [`kinfast.urdf.repair`](#kinfasturdfrepair)
+- [`kinfast.viz`](#kinfastviz)
 - [`kinfast.zoo`](#kinfastzoo)
 
 ## `kinfast`
@@ -44,6 +60,34 @@ These are importable straight from `kinfast`. The second column says which modul
 ### `to_mjcf(path, out=None, **kw)`
 
 Convert a URDF/xacro file to MJCF. Returns the MJCF string; writes it to `out` if given. Keyword args are passed to Robot.to_mjcf.
+
+## `kinfast.acm`
+
+Allowed-collision matrix (ACM) for sphere collision models.
+
+### `allowed_pairs(model, n: int = 256, *, seed: int = 0, q=None, margin: float = 0.0, safety: float = 0.0, chunk: int = 64, dtype=None, device=None) -> dict`
+
+Classify every sphere pair of `model` from `n` sampled configurations.
+
+### `mask_to_pairs(mask: torch.Tensor) -> torch.Tensor`
+
+Symmetric (n, n) bool mask -> (K, 2) long tensor of pairs with i < j.
+
+### `pair_distances(model, q: torch.Tensor, pairs=None) -> torch.Tensor`
+
+Signed sphere-to-sphere distances for a batch of configurations.
+
+### `pairs_to_mask(pairs: torch.Tensor, n: int) -> torch.Tensor`
+
+(K, 2) index pairs -> symmetric (n, n) bool mask with a False diagonal.
+
+### `self_distance_masked(model, q: torch.Tensor, mask=None) -> torch.Tensor`
+
+Minimum signed self-collision distance over the enabled pairs. -> (B,).
+
+### `upper_pairs(n: int, device=None) -> torch.Tensor`
+
+All unordered index pairs (i, j) with i < j, as a (n*(n-1)/2, 2) long tensor. Sphere pairs are symmetric, so everything here works on the strict upper triangle and never double counts a pair.
 
 ## `kinfast.analysis`
 
@@ -68,6 +112,30 @@ Finite (lower, upper) bounds, one per dof, for drawing random configs.
 ### `workspace(chain, link_index, n: int = 10000, seed: int = 0, device='cpu')`
 
 Monte-Carlo reachable workspace of a link origin.
+
+## `kinfast.analysis_ext`
+
+Ellipsoid-level dexterity analysis: the shape of what an arm can do.
+
+### `dynamic_manipulability(chain, q, link_index, translational: bool = True, rows=None) -> dict`
+
+Dynamic (acceleration) manipulability ellipsoid at q. Keys as in `ellipsoid`.
+
+### `ellipsoid(A: torch.Tensor) -> dict`
+
+Principal axes of the ellipsoid {A u : ||u|| <= 1}, for A of shape (B,m,n).
+
+### `manipulability_ellipsoid(chain, q, link_index, translational: bool = True, rows=None) -> dict`
+
+Velocity manipulability ellipsoid at q. Keys as in `ellipsoid`.
+
+### `singularity_proximity(chain, q, link_index, translational: bool = True, rows=None) -> torch.Tensor`
+
+Smallest singular value of the task Jacobian. (B,). 0 exactly at a singularity.
+
+### `task_jacobian(chain, q, link_index, translational: bool = True, rows=None)`
+
+The rows of the geometric Jacobian that make up the task space. (B,m,dof).
 
 ## `kinfast.batching`
 
@@ -127,6 +195,104 @@ Minimum signed distance from any robot sphere to any obstacle sphere. -> (B,).
 
 Minimum signed self-collision distance over allowed sphere pairs. -> (B,).
 
+## `kinfast.collision_auto`
+
+Build a collision SphereModel automatically from the IR's collision shapes.
+
+### `auto_sphere_model(robot_ir, chain, spacing: float = 0.05, padding: float = 0.0, max_per_axis: int = 8, fallback_to_visual: bool = False) -> kinfast.collision.SphereModel`
+
+Collision SphereModel built from the IR's collision primitives.
+
+### `auto_spheres(robot_ir, chain, spacing: float = 0.05, padding: float = 0.0, max_per_axis: int = 8, fallback_to_visual: bool = False)`
+
+Sphere dict for a whole robot: {link_index: [(x, y, z, r), ...]}.
+
+### `spheres_for_geometry(geom, spacing: float = 0.05, padding: float = 0.0, max_per_axis: int = 8)`
+
+Spheres covering one Geometry, expressed in the link frame.
+
+### `unsupported_links(robot_ir, chain, fallback_to_visual: bool = False)`
+
+Names of chain links that contribute no spheres, and why.
+
+## `kinfast.collision_world`
+
+Differentiable distances from a robot's bounding spheres to world geometry.
+
+### class `Box(center: Any, half_extents: Any)`
+
+An axis-aligned solid box, given by its center and half extents.
+
+Fields: `center`, `half_extents`
+
+Methods:
+
+- `Box.from_bounds(lower: Sequence[float], upper: Sequence[float]) -> 'Box'`
+  Build from opposite corners instead of center and half extents.
+- `Box.signed_distance(points: torch.Tensor) -> torch.Tensor`
+  (..., 3) points -> (...) signed distance, negative inside the box.
+
+### class `Capsule(a: Any, b: Any, radius: Any)`
+
+A segment from a to b, thickened by a radius.
+
+Fields: `a`, `b`, `radius`
+
+Methods:
+
+- `Capsule.signed_distance(points: torch.Tensor) -> torch.Tensor`
+  (..., 3) points -> (...) signed distance, negative inside the capsule.
+
+### class `HalfSpace(normal: Any, offset: Any = 0.0)`
+
+The solid region on one side of a plane: n . x + d <= 0.
+
+Fields: `normal`, `offset`
+
+Methods:
+
+- `HalfSpace.ceiling(height: float) -> 'HalfSpace'`
+  The solid above z = height, with free space below it.
+- `HalfSpace.floor(height: float = 0.0) -> 'HalfSpace'`
+  The ground plane at z = height, with free space above it.
+- `HalfSpace.signed_distance(points: torch.Tensor) -> torch.Tensor`
+  (..., 3) points -> (...) signed distance, negative inside the solid.
+
+### class `Sphere(center: Any, radius: Any)`
+
+A solid ball. The same shape collision.py handles, in world-list form.
+
+Fields: `center`, `radius`
+
+Methods:
+
+- `Sphere.signed_distance(points: torch.Tensor) -> torch.Tensor`
+  (..., 3) points -> (...) signed distance, negative inside the ball.
+
+### `as_shapes(world: kinfast.collision_world.HalfSpace | kinfast.collision_world.Box | kinfast.collision_world.Capsule | kinfast.collision_world.Sphere | Iterable[kinfast.collision_world.HalfSpace | kinfast.collision_world.Box | kinfast.collision_world.Capsule | kinfast.collision_world.Sphere]) -> List[kinfast.collision_world.HalfSpace | kinfast.collision_world.Box | kinfast.collision_world.Capsule | kinfast.collision_world.Sphere]`
+
+Normalize a world argument to a list of shapes.
+
+### `distance_to_world(model: kinfast.collision.SphereModel, q: torch.Tensor, world: kinfast.collision_world.HalfSpace | kinfast.collision_world.Box | kinfast.collision_world.Capsule | kinfast.collision_world.Sphere | Iterable[kinfast.collision_world.HalfSpace | kinfast.collision_world.Box | kinfast.collision_world.Capsule | kinfast.collision_world.Sphere]) -> torch.Tensor`
+
+Minimum signed distance from the robot to the world. -> (B,).
+
+### `in_collision(model: kinfast.collision.SphereModel, q: torch.Tensor, world: kinfast.collision_world.HalfSpace | kinfast.collision_world.Box | kinfast.collision_world.Capsule | kinfast.collision_world.Sphere | Iterable[kinfast.collision_world.HalfSpace | kinfast.collision_world.Box | kinfast.collision_world.Capsule | kinfast.collision_world.Sphere], margin: float = 0.0) -> torch.Tensor`
+
+Boolean (B,) mask: is the robot within `margin` of the world.
+
+### `shape_distances(points: torch.Tensor, world: kinfast.collision_world.HalfSpace | kinfast.collision_world.Box | kinfast.collision_world.Capsule | kinfast.collision_world.Sphere | Iterable[kinfast.collision_world.HalfSpace | kinfast.collision_world.Box | kinfast.collision_world.Capsule | kinfast.collision_world.Sphere]) -> torch.Tensor`
+
+Signed distance from every point to every shape. (..., 3) -> (..., K).
+
+### `world_clearance_cost(model: kinfast.collision.SphereModel, q: torch.Tensor, world: kinfast.collision_world.HalfSpace | kinfast.collision_world.Box | kinfast.collision_world.Capsule | kinfast.collision_world.Sphere | Iterable[kinfast.collision_world.HalfSpace | kinfast.collision_world.Box | kinfast.collision_world.Capsule | kinfast.collision_world.Sphere], margin: float = 0.05) -> torch.Tensor`
+
+Hinge penalty on every sphere-shape pair closer than `margin`. -> (B,).
+
+### `world_distances(model: kinfast.collision.SphereModel, q: torch.Tensor, world: kinfast.collision_world.HalfSpace | kinfast.collision_world.Box | kinfast.collision_world.Capsule | kinfast.collision_world.Sphere | Iterable[kinfast.collision_world.HalfSpace | kinfast.collision_world.Box | kinfast.collision_world.Capsule | kinfast.collision_world.Sphere]) -> torch.Tensor`
+
+Signed distance from every robot sphere to every world shape.
+
 ## `kinfast.com`
 
 Whole-body center of mass and its Jacobian.
@@ -162,6 +328,42 @@ Methods:
 
 ### `compile_robot(robot: kinfast.ir.Robot, dtype=torch.float32) -> kinfast.compile.CompiledChain`
 
+## `kinfast.config`
+
+Configuration-space utilities: metrics, interpolation, limits, sampling.
+
+### `clamp_to_limits(chain, q, continuous=None)`
+
+Nearest legal configuration, shape (..., dof).
+
+### `continuous_mask(chain, device=None)`
+
+(dof,) bool: which dofs may be compared and interpolated modulo a turn.
+
+### `difference(chain, q_a, q_b, continuous=None)`
+
+Signed shortest displacement from q_a to q_b, shape (..., dof).
+
+### `distance(chain, q_a, q_b, weights=None, p: float = 2.0, continuous=None)`
+
+Configuration-space distance between q_a and q_b, shape (...).
+
+### `interpolate(chain, q_a, q_b, s, continuous=None)`
+
+Configuration a fraction s of the way from q_a to q_b along the short arc.
+
+### `is_within_limits(chain, q, tol: float = 0.0, wrap: bool = True, continuous=None, per_joint: bool = False)`
+
+Is every joint inside its limits? bool of shape (...) (or (..., dof)).
+
+### `sample(chain, n: int, seed: int = 0, scramble: bool = True, dtype=None, device=None)`
+
+n configurations inside the joint limits, shape (n, dof).
+
+### `wrap_angle(x)`
+
+Fold angles into [-pi, pi), keeping the gradient (it is 1 almost everywhere: wrapping only ever subtracts a constant number of turns).
+
 ## `kinfast.control`
 
 Classical model-based controllers built on the dynamics layer, plus a semi-implicit Euler simulator to run them in closed loop.
@@ -181,6 +383,38 @@ PD around q_des with gravity feedforward. kp/kd: scalars or (dof,).
 ### `simulate(chain, q0, qd0, controller, dt: float, steps: int, record_every: int = 1)`
 
 Roll out the robot under `controller(t, q, qd) -> tau`.
+
+## `kinfast.control_task`
+
+Operational-space (Cartesian) impedance control.
+
+### `impedance_controller(chain, x_des, kp, kd, link_index=-1, *, xd_des=None, **kwargs)`
+
+Wrap opspace_impedance into a controller(t, q, qd) for control.simulate.
+
+### `jdot_qd(chain, q, qd, link_index=-1, rows=None)`
+
+The Jdot qd term of the task acceleration xdd = J qdd + Jdot qd. (B,m).
+
+### `nullspace_projector(J, M=None, damping: float = 0.0001)`
+
+Projector N^T with J N^T = 0 (or J M^-1 N^T = 0). (B,dof,dof).
+
+### `opspace_impedance(chain, q, qd, x_des, kp, kd, link_index=-1, *, xd_des=None, rows=None, use_gravity: bool = True, inertia_shaping: bool = False, damping: float = 0.0001, null_kd=0.0, null_kp=0.0, q_rest=None, tau_null=None)`
+
+Cartesian impedance torque tau = J^T (Kp e - Kd xd) + g(q). (B,dof).
+
+### `task_error(chain, q, x_des, link_index=-1, rows=None, rp=None)`
+
+World-frame task error x_des - x at the given link. (B,m).
+
+### `task_inertia(chain, q, link_index=-1, rows=None, damping: float = 0.0001, J=None, M=None)`
+
+Operational-space inertia Lambda = (J M^-1 J^T)^-1. (B,m,m).
+
+### `task_jacobian(chain, q, link_index=-1, rows=None, rp=None)`
+
+The rows of the geometric Jacobian this task uses. (B,m,dof).
 
 ## `kinfast.dynamics`
 
@@ -206,6 +440,30 @@ tau to realize (q,qd,qdd). (B,dof).
 
 (B,dof) -> (B,dof,dof) symmetric positive-definite mass matrix.
 
+## `kinfast.dynamics_rnea`
+
+Recursive Newton-Euler inverse dynamics and the composite-rigid-body mass matrix.
+
+### `bias(chain: kinfast.compile.CompiledChain, q, qd, gravity=True) -> torch.Tensor`
+
+Velocity and gravity terms c(q,qd) + g(q). (B,dof).
+
+### `crba(chain: kinfast.compile.CompiledChain, q) -> torch.Tensor`
+
+Joint-space mass matrix by the composite-rigid-body algorithm: (B,dof,dof).
+
+### `forward_dynamics(chain: kinfast.compile.CompiledChain, q, qd, tau, gravity=True) -> torch.Tensor`
+
+qdd produced by tau at state (q, qd).
+
+### `gravity_torque(chain: kinfast.compile.CompiledChain, q, gravity=True) -> torch.Tensor`
+
+Gravity torque g(q). (B,dof). RNEA at rest.
+
+### `rnea(chain: kinfast.compile.CompiledChain, q, qd, qdd, gravity=True) -> torch.Tensor`
+
+Inverse dynamics by recursive Newton-Euler: (B,dof) joint torques.
+
 ## `kinfast.fk`
 
 Batched forward kinematics: propagate transforms down the tree.
@@ -218,6 +476,90 @@ World rotations and positions as per-link lists: (wR, wp) with wR[i] (B, 3, 3) a
 
 q (B, dof) -> world transforms (B, n_links, 4, 4).
 
+## `kinfast.fk_subset`
+
+Forward kinematics for a few links instead of the whole robot.
+
+### class `LinkSet(chain: kinfast.compile.CompiledChain, link_indices)`
+
+A fixed set of links, with the pruned FK sweep that reaches them.
+
+Methods:
+
+- `LinkSet.fk(q: torch.Tensor) -> torch.Tensor`
+  q (B, dof) -> world transforms (B, len(self), 4, 4) for the requested links, in the order they were requested.
+- `LinkSet.fk_rp(q: torch.Tensor)`
+  World rotations and positions of the requested links, as lists (wR, wp) with wR[k] (B, 3, 3) and wp[k] (B, 3), in the order the links were requested. The assembly-free path, matching fk.fk_rp.
+- `LinkSet.n_visited` (property)
+  How many links the pruned sweep touches, ancestors included.
+
+### `fk_links(chain: kinfast.compile.CompiledChain, q: torch.Tensor, link_indices) -> torch.Tensor`
+
+Forward kinematics for selected links only.
+
+### `link_set(chain: kinfast.compile.CompiledChain, link_indices) -> kinfast.fk_subset.LinkSet`
+
+Get the LinkSet for these links, building and caching it on the chain.
+
+## `kinfast.floating`
+
+Floating-base kinematics: a robot whose root link is free in space.
+
+### class `FloatingRobot(chain: kinfast.compile.CompiledChain)`
+
+A compiled chain plus six free degrees of freedom at the root link.
+
+Methods:
+
+- `FloatingRobot.base_transform(q_full: torch.Tensor) -> torch.Tensor`
+  (B, 6+dof) -> (B, 4, 4) world pose of the root link.
+- `FloatingRobot.dof` (property)
+  Total configuration size: six base freedoms plus the joints.
+- `FloatingRobot.fk(q_full: torch.Tensor) -> torch.Tensor`
+  (B, 6+dof) -> (B, n_links, 4, 4) world transforms.
+- `FloatingRobot.fk_rp(q_full: torch.Tensor)`
+  World rotations and positions as per-link lists (wR, wp), the same shape of result as kinfast.fk.fk_rp. This is the hot path: the Jacobian and IK use it and never assemble 4x4 matrices.
+- `FloatingRobot.ik(target: torch.Tensor, link=-1, q0: torch.Tensor = None, iters: int = 100, damping: float = 0.05, step: float = 1.0, pos_only: bool = False, tol: float = 1e-06, restarts: int = 1, check_every: int = 10, base_bounds=None, base_noise: float = 0.5, rot_noise: float = 0.5, generator=None)`
+  Batched IK that is allowed to move the base. target (B,4,4) -> (q_full (B, 6+dof), info).
+- `FloatingRobot.jacobian(q_full: torch.Tensor, link, frames=None) -> torch.Tensor`
+  (B, 6+dof) -> (B, 6, 6+dof) derivative of the link pose.
+- `FloatingRobot.join(t: torch.Tensor, r: torch.Tensor, q: torch.Tensor) -> torch.Tensor`
+  Inverse of split: assemble a full configuration from its parts.
+- `FloatingRobot.joint_dof` (property)
+  Number of actuated joints (the fixed-base dof).
+- `FloatingRobot.link_id(link) -> int`
+  Accept a link name or an index (negatives count from the end) and return a plain non-negative index into the chain.
+- `FloatingRobot.link_names` (property)
+- `FloatingRobot.link_pose(q_full: torch.Tensor, link) -> torch.Tensor`
+  World pose (B, 4, 4) of one link, without building the whole stack.
+- `FloatingRobot.n_links` (property)
+- `FloatingRobot.seed(target: torch.Tensor, base_noise: float = 0.5, rot_noise: float = 0.5, generator=None) -> torch.Tensor`
+  A starting configuration for IK, one per target pose.
+- `FloatingRobot.split(q_full: torch.Tensor)`
+  (B, 6+dof) -> (translation (B,3), rotation vector (B,3), joints (B,dof)).
+- `FloatingRobot.to(device=None, dtype=None)`
+  Move or cast the underlying chain in place and return self.
+
+### `left_jacobian(r: torch.Tensor) -> torch.Tensor`
+
+(..., 3) rotation vector -> (..., 3, 3) left Jacobian of SO(3).
+
+### `matrix_to_rotvec(R: torch.Tensor) -> torch.Tensor`
+
+(..., 3, 3) rotation matrix -> (..., 3) rotation vector. Inverse of rotvec_to_matrix on the principal branch (angle in [0, pi]).
+
+### `rotvec_to_matrix(r: torch.Tensor) -> torch.Tensor`
+
+(..., 3) rotation vector -> (..., 3, 3) rotation matrix.
+
+### `skew(v: torch.Tensor) -> torch.Tensor`
+
+(..., 3) vector -> (..., 3, 3) cross-product matrix, so skew(a) @ b == a x b.
+
+### `wrap_rotvec(r: torch.Tensor) -> torch.Tensor`
+
+Rewrite a rotation vector as the shortest one describing the same rotation (angle folded into [0, pi]).
+
 ## `kinfast.ik`
 
 Batched damped-least-squares (Levenberg-Marquardt) inverse kinematics.
@@ -225,6 +567,22 @@ Batched damped-least-squares (Levenberg-Marquardt) inverse kinematics.
 ### `ik(chain: kinfast.compile.CompiledChain, target: torch.Tensor, q0: torch.Tensor = None, link_index: int = None, iters: int = 100, damping: float = 0.05, step: float = 1.0, pos_only: bool = False, tol: float = 0.0001, restarts: int = 1, check_every: int = 10)`
 
 Batched IK. target (B,4,4) -> (q (B,dof), info).
+
+## `kinfast.ik_ccd`
+
+Cyclic coordinate descent (CCD) position inverse kinematics, batched.
+
+### `alignment_coeffs(axis: torch.Tensor, u: torch.Tensor, v: torch.Tensor)`
+
+Coefficients of the per joint objective, v . R(axis, theta) u.
+
+### `best_alignment_angle(axis: torch.Tensor, u: torch.Tensor, v: torch.Tensor) -> torch.Tensor`
+
+Angle about `axis` that rotates `u` as close to `v` as possible.
+
+### `ik_ccd(chain: kinfast.compile.CompiledChain, target: torch.Tensor, q0: torch.Tensor = None, link_index: int = None, sweeps: int = 100, tol: float = 0.0001, step: float = 1.0, restarts: int = 1, check_every: int = 10)`
+
+Batched position IK by cyclic coordinate descent.
 
 ## `kinfast.ik_task`
 
@@ -237,6 +595,62 @@ Batched weighted task-space IK. Returns (q (B, dof), info).
 ### `weighted_dls_step(J: torch.Tensor, e: torch.Tensor, weights=None, damping: float = 0.05, dq_null: torch.Tensor = None) -> torch.Tensor`
 
 One damped-least-squares step with row weights and a nullspace term.
+
+## `kinfast.inertia`
+
+Mass properties from primitive geometry.
+
+### class `MassProperties(mass: torch.Tensor, com: torch.Tensor, inertia: torch.Tensor)`
+
+Mass, centre of mass, and inertia about that centre of mass.
+
+### `as_inertial(props)`
+
+MassProperties -> an IR Inertial of plain Python floats.
+
+### `box_inertia(size, density=1000.0, *, dtype=None, device=None)`
+
+Solid box of full extents (x, y, z), centred on its own origin.
+
+### `capsule_inertia(radius, length, density=1000.0, *, dtype=None, device=None)`
+
+Capsule about the +z axis: a cylinder of full length `length` capped by a hemisphere of the same radius at each end, centred on its own origin.
+
+### `combine_mass_properties(parts)`
+
+Sum a sequence of MassProperties expressed in one common frame.
+
+### `cylinder_inertia(radius, length, density=1000.0, *, dtype=None, device=None)`
+
+Solid cylinder about the +z axis, full length `length`, centred on its own origin.
+
+### `fill_missing_inertials(ir, density=1000.0, *, fallback_to_visual=True, fill_zero_mass=True, overwrite=False)`
+
+Give every geometry-bearing link that lacks one a plausible <inertial>.
+
+### `geometry_mass_properties(geom, density=1000.0, *, dtype=None, device=None)`
+
+Mass properties of one IR Geometry, expressed in the link frame.
+
+### `link_mass_properties(link, density=1000.0, *, fallback_to_visual=True, skip_unsupported=False, dtype=None, device=None)`
+
+Mass properties of a whole link, in the link frame.
+
+### `primitive_mass_properties(kind, size, density=1000.0, *, dtype=None, device=None)`
+
+Dispatch on an IR Geometry.kind string with its IR `size` tuple.
+
+### `rotate_inertia(inertia, R)`
+
+Re-express an inertia tensor in a rotated frame: I' = R I R^T.
+
+### `shift_inertia(inertia, mass, offset, *, to_com=False)`
+
+Parallel axis theorem.
+
+### `sphere_inertia(radius, density=1000.0, *, dtype=None, device=None)`
+
+Solid sphere centred on its own origin. m = rho * 4/3 pi r^3 and I = 2/5 m r^2 on every axis.
 
 ## `kinfast.ir`
 
@@ -342,6 +756,40 @@ Parse a useful subset of MJCF (MuJoCo XML) into the same Robot IR that URDF uses
 
 Parse MJCF text. `base_dir` is the directory <include file=...> paths resolve against; without it includes cannot be read and a model that has all of its bodies behind an include raises instead of coming back empty.
 
+## `kinfast.reachability`
+
+Voxelized reachability maps.
+
+### class `ReachabilityMap(chain: object, link_index: int, origin: torch.Tensor, voxel: torch.Tensor, shape: tuple, counts: torch.Tensor, density: torch.Tensor, manipulability: torch.Tensor, n_samples: int, n_binned: int, n_outside: int, q: torch.Tensor = None, points: torch.Tensor = None, w: torch.Tensor = None, rows: tuple = None, seed: int = None)`
+
+A regular 3D grid over end-effector positions plus the samples behind it.
+
+Fields: `chain`, `link_index`, `origin`, `voxel`, `shape`, `counts`, `density`, `manipulability`, `n_samples`, `n_binned`, `n_outside`, `q`, `points`, `w`, `rows`, `seed`
+
+Methods:
+
+- `ReachabilityMap.bounds` (property)
+  (lower, upper) corners of the grid box as two (3,) tensors.
+- `ReachabilityMap.is_reachable(points)`
+  Batched occupancy test: (..., 3) points -> (...) bool.
+- `ReachabilityMap.n_voxels` (property)
+- `ReachabilityMap.query(points, refine=True, iters=100, damping=0.02, step=0.6, tol=0.0001)`
+  Everything the map knows about a set of target points.
+- `ReachabilityMap.reachable_volume` (property)
+  Occupied voxel count times voxel volume: a coarse workspace volume.
+- `ReachabilityMap.to(device)`
+  Move the grid and the stored samples to a device. The chain is left alone: fk/jacobian cast its constants per (device, dtype) themselves, so a map can be queried on a device the chain was never moved to.
+- `ReachabilityMap.voxel_centers()`
+  Center of every voxel: (nx, ny, nz, 3). Handy for plotting or for evaluating an analytic workspace on the same grid the map uses.
+- `ReachabilityMap.voxel_of(points)`
+  Grid index of each point: (..., 3) long, plus an in-bounds mask.
+- `ReachabilityMap.voxel_volume` (property)
+  Volume of a single voxel, as a 0-dim tensor of the working dtype.
+
+### `reachability_map(chain, link_index=-1, n: int = 20000, voxel=0.05, seed: int = 0, bounds=None, q=None, dtype=None, device=None, rows=None, with_manipulability: bool = True, chunk: int = 8192, keep_samples: bool = True)`
+
+Build a voxelized reachability map for one link of a chain.
+
 ## `kinfast.robot`
 
 Ergonomic surface: five-line load + fk/jacobian/ik.
@@ -404,6 +852,68 @@ Load a robot from URDF, xacro, or MJCF (format auto-detected). `mappings` are xa
 
 Same as `load`, from URDF/MJCF text already in memory. `base_dir` is the directory MJCF <include> paths resolve against; kinfast.load fills it in from the file's path.
 
+## `kinfast.studio`
+
+kinfast studio: a desktop window for looking at a robot and measuring it.
+
+### class `Studio(robot, name)`
+
+The window. Holds the robot, the axes, and the measurements.
+
+Methods:
+
+- `Studio.show()`
+
+### `bench_ik(robot, restarts=(1, 2, 4, 8), targets=256, iters=60, report=<built-in function print>)`
+
+Solve rate and wall time for a batch of reachable targets.
+
+### `bench_single_query(robot, report=<built-in function print>)`
+
+Latency of one forward kinematics call, both paths, in microseconds.
+
+### `bench_throughput(robot, batches=(1, 10, 100, 1000, 10000), report=<built-in function print>)`
+
+Configurations per second for FK and Jacobians, per batch size.
+
+### `best_of(fn, runs=7, warmup=2)`
+
+Fastest of several runs, which is the honest number for a benchmark.
+
+### `find_robots()`
+
+Robot files this checkout can offer, by short name.
+
+### `main(argv=None)`
+
+## `kinfast.summary`
+
+A human-readable report of what a loaded robot actually is.
+
+### class `Summary(name, dof, n_links, joints, links, total_mass, no_inertial, reach, reach_link, findings, notes, sampled=None, sampled_link=None, samples=0)`
+
+The contents of the report, as data plus two renderers.
+
+Methods:
+
+- `Summary.n_movable` (property)
+- `Summary.to_markdown()`
+  The same report as markdown, for a README or an issue.
+- `Summary.to_text()`
+  The report as an aligned plain-text table.
+
+### `reach_estimate(chain)`
+
+Upper bound on how far any link origin can sit from the base origin.
+
+### `sampled_reach(chain, n=2048, seed=0)`
+
+Farthest any link origin got from the base over `n` random configs.
+
+### `summary(robot, findings=None, reach_samples=2048, seed=0)`
+
+Build the report for a loaded robot.
+
 ## `kinfast.trajectory`
 
 Point-to-point trajectory generation under joint limits.
@@ -415,6 +925,37 @@ Quintic point-to-point profile.
 ### `trapezoidal(q0: torch.Tensor, qf: torch.Tensor, vmax: torch.Tensor, amax: torch.Tensor, n: int = 100)`
 
 Synchronized trapezoidal velocity profile, time-optimal under limits.
+
+## `kinfast.trajectory_spline`
+
+Splines through waypoints, in joint space and in Cartesian space.
+
+### class `CubicSpline(waypoints: torch.Tensor, times=None, duration=None, v0=None, vf=None)`
+
+C2 cubic spline through joint-space waypoints, clamped at both ends.
+
+Methods:
+
+- `CubicSpline.batch_shape` (property)
+- `CubicSpline.dof` (property)
+- `CubicSpline.duration` (property)
+- `CubicSpline.evaluate(t)`
+  Evaluate at times t (M,) -> (q, qd, qdd), each (..., M, dof).
+- `CubicSpline.n_waypoints` (property)
+- `CubicSpline.sample(n: int = 100)`
+  Sample n points evenly over the knot range.
+
+### `cartesian_line(chain: kinfast.compile.CompiledChain, link, T_start: torch.Tensor, T_goal: torch.Tensor, n: int = 25, q0: torch.Tensor = None, retry: bool = True, **ik_kwargs)`
+
+Joint path that drags `link` along a straight line from T_start to T_goal.
+
+### `cubic_spline(waypoints: torch.Tensor, times=None, n: int = 100, duration=None, v0=None, vf=None)`
+
+Build a clamped C2 cubic spline and sample it in one call.
+
+### `interpolate_pose(T_start: torch.Tensor, T_goal: torch.Tensor, n: int = 25)`
+
+Straight-line pose interpolation from T_start to T_goal.
 
 ## `kinfast.transforms`
 
@@ -465,6 +1006,18 @@ Safe, kinematics-relevant repairs on the Robot IR.
 Fields: `code`, `where`, `message`
 
 ### `repair(robot: kinfast.ir.Robot)`
+
+## `kinfast.viz`
+
+Matplotlib views of a compiled chain: a 3D stick figure and a gif.
+
+### `animate(chain, qs, path, *, fps=20, link_spheres=None, color='#1f77b4', sphere_color='#d62728', sphere_alpha=0.6, linewidth=2.0, markersize=4.0, sphere_seg=24, title=None, labels=False, figsize=(6.0, 6.0), dpi=100, elev=None, azim=None)`
+
+Write a gif of the robot moving through qs, using the pillow writer.
+
+### `plot(chain, q, ax=None, link_spheres=None, *, color='#1f77b4', sphere_color='#d62728', sphere_alpha=0.6, linewidth=2.0, markersize=4.0, sphere_seg=24, limits=None, title=None, labels=False, figsize=(6.0, 6.0), elev=None, azim=None)`
+
+Draw a 3D stick figure of the robot: link origins joined parent to child.
 
 ## `kinfast.zoo`
 

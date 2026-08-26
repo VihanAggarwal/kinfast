@@ -194,6 +194,32 @@ target, because both FK and the distance field are differentiable.
 
 ![collision-aware IK](examples/assets/collision_ik.png)
 
+## Looking at a robot
+
+`python -m kinfast.studio` opens a window with the robot on the left, a slider
+per joint, and three benchmark panels on the right that stay empty until you
+press "run benchmarks", because the numbers in them are measured on your
+machine when you ask, not read from a table:
+
+- throughput against batch size, forward kinematics and Jacobians from batch 1
+  to batch 10,000, which is where you can see the per-configuration cost fall
+- single query latency, the tensor path against `robot.compile()`, on a log
+  scale because the gap does not fit on a linear one
+- inverse kinematics solve rate and wall time against the number of random
+  seeds per target
+
+The buttons run real work: "solve ik" picks a reachable pose, throws it away,
+and asks the library to find it again; "workspace" samples where the arm can
+reach. `--save shot.png` does the whole thing headlessly, and `--list` prints
+the robots it found.
+
+```bash
+python -m kinfast.studio --robot so101
+python -m kinfast.studio --robot panda --save studio.png
+```
+
+Needs matplotlib (`pip install matplotlib`), which the library itself does not.
+
 ## What it is not
 
 Not a physics simulator (use MuJoCo or Genesis), not a motion planner (use
