@@ -34,7 +34,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--urdf", default="examples/assets/panda.urdf")
     ap.add_argument("--out", default="examples/assets/BENCHMARK_GPU.md")
-    ap.add_argument("--max-batch", type=int, default=1_000_000)
+    ap.add_argument("--max-batch", type=int, default=10_000_000,
+                    help="stop growing here; the run ends earlier if the card fills")
     args = ap.parse_args()
     if not torch.cuda.is_available():
         raise SystemExit("no CUDA device visible to torch")
@@ -60,8 +61,8 @@ def main():
         "kinfast FK returns all link frames; pytorch_kinematics is its ee-only",
         "path. Reproduce: `python examples/gpu_benchmark.py`.",
         "",
-        "| batch | kinfast FK | kinfast Jacobian | pk FK | kinfast FK configs/s |",
-        "|---|---|---|---|---|",
+        "| batch | kinfast FK | kinfast Jacobian | pk FK | kinfast FK configs/s | peak memory |",
+        "|---|---|---|---|---|---|",
     ]
     batch = 1000
     largest = 0
@@ -77,23 +78,27 @@ def main():
                 pk_s = f"{t_pk*1e3:.2f} ms"
             else:
                 pk_s = "n/a"
+            peak = torch.cuda.max_memory_allocated() / 2**30
             lines.append(f"| {batch:,} | {t_fk*1e3:.2f} ms | {t_j*1e3:.2f} ms | {pk_s} | "
-                         f"{batch/t_fk:,.0f} |")
+                         f"{batch/t_fk:,.0f} | {peak:.1f} GB |")
             largest = batch
             del q
             torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats()
         except torch.cuda.OutOfMemoryError:
             torch.cuda.empty_cache()
-            lines.append(f"| {batch:,} | OOM | | | |")
+            lines.append(f"| {batch:,} | out of memory | | | | |")
             break
         batch *= 10
 
     # the headline: batched IK
     lines += ["", "## Batched IK (position, 100 iterations)", "",
-              "| targets | restarts | time | seed-solves/s | within 5 cm |", "|---|---|---|---|---|"]
-    for n, restarts in ((10_000, 4), (100_000, 2)):
+              "| targets | restarts | time | seed-solves/s | within 5 cm | peak memory |",
+              "|---|---|---|---|---|---|"]
+    for n, restarts in ((10_000, 4), (100_000, 4), (1_000_000, 2)):
         if n > largest:
             break
+        torch.cuda.reset_peak_memory_stats()
         try:
             torch.manual_seed(1)
             targets = robot.fk(robot.random_configs(n))
@@ -104,13 +109,20 @@ def main():
             dt = time.perf_counter() - t0
             err = (robot.fk(q_sol)[:, :3, 3] - targets[:, :3, 3]).norm(dim=-1)
             ok = (err < 5e-2).float().mean().item() * 100
-            lines.append(f"| {n:,} | {restarts} | {dt:.2f} s | {n*restarts/dt:,.0f} | {ok:.1f}% |")
+            peak = torch.cuda.max_memory_allocated() / 2**30
+            lines.append(f"| {n:,} | {restarts} | {dt:.2f} s | {n*restarts/dt:,.0f} | "
+                         f"{ok:.1f}% | {peak:.1f} GB |")
             del targets, q_sol
             torch.cuda.empty_cache()
         except torch.cuda.OutOfMemoryError:
             torch.cuda.empty_cache()
-            lines.append(f"| {n:,} | {restarts} | OOM | | |")
+            lines.append(f"| {n:,} | {restarts} | out of memory | | | |")
             break
+
+    props = torch.cuda.get_device_properties(0)
+    lines += ["",
+              f"Largest batch that fit: {largest:,} configurations.",
+              f"Card: {gpu_name}, {props.total_memory / 2**30:.0f} GB."]
 
     text = "\n".join(lines) + "\n"
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
