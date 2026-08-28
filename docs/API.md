@@ -48,6 +48,7 @@ These are importable straight from `kinfast`. The second column says which modul
 - [`kinfast.robot`](#kinfastrobot)
 - [`kinfast.studio`](#kinfaststudio)
 - [`kinfast.summary`](#kinfastsummary)
+- [`kinfast.topp`](#kinfasttopp)
 - [`kinfast.trajectory`](#kinfasttrajectory)
 - [`kinfast.trajectory_spline`](#kinfasttrajectory_spline)
 - [`kinfast.transforms`](#kinfasttransforms)
@@ -907,6 +908,8 @@ Methods:
   Build a collision SphereModel. spheres: {link_name_or_index: [(x,y,z,r)]}.
 - `Robot.summary(**kw)`
   Plain text description of the model: joints, limits, masses, reach.
+- `Robot.time_path(path, vmax=None, amax=None, **kw)`
+  Fastest timing along a path that stays inside the joint limits.
 - `Robot.to(device=None, dtype=None)`
   Move to a device and/or recompile at a float precision, in place.
 - `Robot.to_mjcf(geometry=True, meshdir='', meshdir_strip='')`
@@ -989,6 +992,18 @@ Farthest any link origin got from the base over `n` random configs.
 ### `summary(robot, findings=None, reach_samples=2048, seed=0)`
 
 Build the report for a loaded robot.
+
+## `kinfast.topp`
+
+Time optimal timing along a fixed path.
+
+### `duration(chain, path, vmax=None, amax=None, n_grid=400, blend=0.0)`
+
+How long the path takes under the limits, without the samples.
+
+### `time_parameterize(chain, path, vmax=None, amax=None, n_grid=400, blend=0.0)`
+
+Fastest timing along `path` inside the joint limits.
 
 ## `kinfast.trajectory`
 

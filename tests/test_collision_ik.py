@@ -46,7 +46,7 @@ def test_collision_aware_ik_escapes_and_reaches():
 
 def test_collision_aware_ik_batched_best_of():
     """The landscape has local minima (like all IK); the supported usage is a
-    batch of seeds with best-of selection — the best seed must fully succeed,
+    batch of seeds with best-of selection, the best seed must fully succeed,
     and every seed must at least end collision-free."""
     chain, li, model, q_reach, target, obs_c, obs_r = _setup()
     B = 8

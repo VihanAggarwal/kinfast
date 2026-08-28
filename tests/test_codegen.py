@@ -1,7 +1,7 @@
 # tests/test_codegen.py
 """The scalar compiler validated against the batched torch path (which is itself
 cross-validated against pytorch_kinematics on a real Panda, so agreement here is
-transitive agreement with an independent library) — on every fixture robot AND
+transitive agreement with an independent library), on every fixture robot AND
 every real robot present in the gallery."""
 import glob
 import math

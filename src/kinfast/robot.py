@@ -332,6 +332,16 @@ class Robot:
         return check(self, **kw)
 
     # ---- planning ----
+    def time_path(self, path, vmax=None, amax=None, **kw):
+        """Fastest timing along a path that stays inside the joint limits.
+
+        Pass a planned path to get a trajectory that does not stop at every
+        intermediate point. `blend` rounds corners if the waypoints really are
+        corners; see kinfast.topp for what that costs.
+        """
+        from kinfast.topp import time_parameterize
+        return time_parameterize(self.chain, path, vmax, amax, **kw)
+
     def plan(self, q_start, q_goal, checker, **kw):
         """Plan a collision free path between two configurations.
 

@@ -103,3 +103,16 @@ def test_parse_notes_is_defined_once(robot):
     src = inspect.getsource(kinfast.Robot)
     assert src.count("def parse_notes") == 1
     assert robot.parse_notes == []
+
+
+def test_time_path_method(robot):
+    """Robot.time_path forwards to the timing module and respects the limits."""
+    torch.manual_seed(0)
+    path = robot.random_configs(6)
+    t, q, qd, qdd, info = robot.time_path(path)
+    vmax = robot.chain.vmax.clone()
+    vmax[vmax <= 0] = 1.0
+    assert bool((qd.abs() <= vmax.unsqueeze(0) * 1.001 + 1e-6).all())
+    assert torch.allclose(q[0], path[0], atol=1e-6)
+    assert torch.allclose(q[-1], path[-1], atol=1e-6)
+    assert info["duration"] > 0

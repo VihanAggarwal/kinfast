@@ -67,7 +67,7 @@ def test_branched_tree_both_children():
     assert torch.allclose(right, torch.tensor([-1.0, 0.0, 0.0], dtype=torch.float64), atol=1e-9)
 
 
-# axis declared NON-UNIT ("0 0 3") — repair is bypassed by compiling directly.
+# axis declared NON-UNIT ("0 0 3"), repair is bypassed by compiling directly.
 NONUNIT = """
 <robot name="nonunit">
   <link name="base"/><link name="l1"/><link name="ee"/>

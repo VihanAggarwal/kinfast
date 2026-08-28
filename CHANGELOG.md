@@ -5,6 +5,15 @@ Notable changes, newest first. Dates are when the work landed on main.
 ## Unreleased
 
 ### Added
+- Time optimal timing along a path (`kinfast.topp`, or `robot.time_path`).
+  A planner gives a shape with no speed attached; this finds the fastest
+  traverse of that shape inside the joint limits, by reducing the per joint
+  constraints to bounds on a single path coordinate and running the standard
+  forward backward pass. On a dense path it is 20 to 27 percent quicker than
+  running a trapezoid between every pair of waypoints, because it does not
+  brake to a halt at points that were never corners. On a sparse path there is
+  nothing to win and it returns the same answer. Corners are handled honestly:
+  either stop at them, or round them by a bounded amount that is reported.
 - Path planning (`kinfast.planning`): RRT-Connect with shortcut smoothing,
   working in configuration space and checking a whole edge in one batched
   collision call. `plan.to_trajectory(robot)` times the result against the

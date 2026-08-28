@@ -1,6 +1,6 @@
 # tests/test_control.py
 """Controllers validated in closed loop: the controller must actually hold or
-track when simulated with the same dynamics — trajectory + dynamics + control
+track when simulated with the same dynamics, trajectory + dynamics + control
 + simulator all composing is the real integration test."""
 import torch
 from kinfast.urdf.parse import parse_urdf_string
