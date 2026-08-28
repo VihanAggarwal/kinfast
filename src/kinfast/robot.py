@@ -107,13 +107,6 @@ class Robot:
         return self.chain.n_links
 
     @property
-    def parse_notes(self):
-        """Notes the parser recorded about anything it had to reinterpret, such
-        as an MJCF free joint pinned to the world. The notes live on the IR, so
-        this forwards to `self.ir`; empty when there is no IR to ask."""
-        return list(getattr(self.ir, "parse_notes", None) or [])
-
-    @property
     def joint_names(self):
         """Movable joint names, ordered by their index in q."""
         return list(self.chain.joint_names)
@@ -262,6 +255,97 @@ class Robot:
         return trapezoidal(q0, qf.to(device=q0.device, dtype=q0.dtype),
                            vmax, amax, n=n)
 
+    # ---- velocities ----
+    def twist(self, q, qd, link=None):
+        """Spatial velocity of a link, (B, 6) as (linear, angular)."""
+        from kinfast.velocity import twist as _twist
+        idx = self.link_id(link) if link else self.link_id(self.ee_link)
+        return _twist(self.chain, q, qd, idx)
+
+    def acceleration(self, q, qd, qdd, link=None):
+        """Spatial acceleration of a link, (B, 6). Includes the Jdot qd term,
+        so it is nonzero at constant joint velocity."""
+        from kinfast.velocity import acceleration as _acc
+        idx = self.link_id(link) if link else self.link_id(self.ee_link)
+        return _acc(self.chain, q, qd, qdd, idx)
+
+    # ---- mass distribution ----
+    def com(self, q):
+        """Whole-body centre of mass in world coordinates, (B, 3)."""
+        from kinfast.com import com as _com
+        return _com(self.chain, q)
+
+    def com_jacobian(self, q):
+        """Derivative of the centre of mass with respect to q, (B, 3, dof)."""
+        from kinfast.com import com_jacobian as _comj
+        return _comj(self.chain, q)
+
+    @property
+    def total_mass(self):
+        from kinfast.com import total_mass
+        return total_mass(self.chain)
+
+    # ---- analysis ----
+    def manipulability(self, q, link=None, **kw):
+        """Yoshikawa manipulability at q. Zero at a singularity."""
+        from kinfast.analysis import manipulability as _man
+        idx = self.link_id(link) if link else self.link_id(self.ee_link)
+        return _man(self.chain, q, idx, **kw)
+
+    def manipulability_ellipsoid(self, q, link=None, **kw):
+        """Axes and lengths of the velocity ellipsoid at q."""
+        from kinfast.analysis_ext import manipulability_ellipsoid as _ell
+        idx = self.link_id(link) if link else self.link_id(self.ee_link)
+        return _ell(self.chain, q, idx, **kw)
+
+    def workspace(self, n=10000, link=None, **kw):
+        """Monte Carlo cloud of reachable positions for a link."""
+        from kinfast.analysis import workspace as _ws
+        idx = self.link_id(link) if link else self.link_id(self.ee_link)
+        return _ws(self.chain, idx, n=n, **kw)
+
+    def reachability(self, n=20000, link=None, **kw):
+        """Voxelised reachability map, with occupancy and mean manipulability."""
+        from kinfast.reachability import reachability_map
+        idx = self.link_id(link) if link else self.link_id(self.ee_link)
+        return reachability_map(self.chain, link_index=idx, n=n, **kw)
+
+    def fk_links(self, q, links):
+        """Forward kinematics for named or indexed links only, (B, k, 4, 4).
+
+        Prunes the sweep to the ancestors those links actually need, which is
+        worth it on a tree with many branches when you want one leaf.
+        """
+        from kinfast.fk_subset import fk_links as _fk_links
+        idx = [self.link_id(l) if isinstance(l, str) else l for l in links]
+        return _fk_links(self.chain, q, idx)
+
+    # ---- reports ----
+    def summary(self, **kw):
+        """Plain text description of the model: joints, limits, masses, reach."""
+        from kinfast.summary import summary as _summary
+        return _summary(self, **kw)
+
+    def lint(self, **kw):
+        """Structural problems in the model, beyond what load() repairs."""
+        from kinfast.lint import check
+        return check(self, **kw)
+
+    # ---- planning ----
+    def plan(self, q_start, q_goal, checker, **kw):
+        """Plan a collision free path between two configurations.
+
+        `checker` is usually a kinfast.planning.CollisionChecker built from a
+        sphere model and a world.
+        """
+        from kinfast.planning import rrt_connect
+        return rrt_connect(self.chain, q_start, q_goal, checker, **kw)
+
+    def floating(self):
+        """This robot on a free six degree of freedom base."""
+        from kinfast.floating import FloatingRobot
+        return FloatingRobot(self.chain)
+
     # ---- collision ----
     def sphere_model(self, spheres):
         """Build a collision SphereModel. spheres: {link_name_or_index: [(x,y,z,r)]}."""
@@ -269,6 +353,18 @@ class Robot:
         resolved = {(self.link_id(k) if isinstance(k, str) else k): v
                     for k, v in spheres.items()}
         return SphereModel(self.chain, resolved)
+
+    def auto_sphere_model(self, **kw):
+        """Collision spheres built from the model's own collision primitives.
+
+        Returns an empty model for a robot that ships only meshes, since there
+        is nothing to derive them from.
+        """
+        from kinfast.collision_auto import auto_sphere_model
+        if self.ir is None:
+            raise ValueError("this Robot was built without its IR; load it "
+                             "with kinfast.load")
+        return auto_sphere_model(self.ir, self.chain, **kw)
 
 
 def _sniff(text):

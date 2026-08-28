@@ -53,6 +53,7 @@ These are importable straight from `kinfast`. The second column says which modul
 - [`kinfast.transforms`](#kinfasttransforms)
 - [`kinfast.urdf.parse`](#kinfasturdfparse)
 - [`kinfast.urdf.repair`](#kinfasturdfrepair)
+- [`kinfast.velocity`](#kinfastvelocity)
 - [`kinfast.viz`](#kinfastviz)
 - [`kinfast.zoo`](#kinfastzoo)
 
@@ -846,6 +847,14 @@ Loaded robot. The dtype of the q you pass decides the working dtype of every met
 
 Methods:
 
+- `Robot.acceleration(q, qd, qdd, link=None)`
+  Spatial acceleration of a link, (B, 6). Includes the Jdot qd term, so it is nonzero at constant joint velocity.
+- `Robot.auto_sphere_model(**kw)`
+  Collision spheres built from the model's own collision primitives.
+- `Robot.com(q)`
+  Whole-body centre of mass in world coordinates, (B, 3).
+- `Robot.com_jacobian(q)`
+  Derivative of the centre of mass with respect to q, (B, 3, dof).
 - `Robot.compile()`
   Generate robot-specific straight-line code for microsecond single-query FK / Jacobian / IK (the scalar backend). Returns a CompiledRobot; the batched torch path on this Robot is unaffected.
 - `Robot.dof` (property)
@@ -855,8 +864,12 @@ Methods:
   The float dtype the chain's constants were compiled at.
 - `Robot.fk(q, link=None)`
 - `Robot.fk_all(q)`
+- `Robot.fk_links(q, links)`
+  Forward kinematics for named or indexed links only, (B, k, 4, 4).
 - `Robot.float()`
   Recompile the chain at float32, in place. Returns self.
+- `Robot.floating()`
+  This robot on a free six degree of freedom base.
 - `Robot.forward_dynamics(q, qd, tau, use_gravity=True)`
 - `Robot.from_ir(robot_ir, repair_model=True, ee_link=None, dtype=torch.float32)`
   Compile a parsed model. `dtype` is the precision the constants are compiled at (default float32); pass torch.float64 for a double chain.
@@ -869,26 +882,43 @@ Methods:
   Movable joint names, ordered by their index in q.
 - `Robot.link_id(name)`
   Row of `fk_all` for a named link.
+- `Robot.lint(**kw)`
+  Structural problems in the model, beyond what load() repairs.
 - `Robot.lower` (property)
+- `Robot.manipulability(q, link=None, **kw)`
+  Yoshikawa manipulability at q. Zero at a singularity.
+- `Robot.manipulability_ellipsoid(q, link=None, **kw)`
+  Axes and lengths of the velocity ellipsoid at q.
 - `Robot.mass_matrix(q)`
 - `Robot.n_links` (property)
 - `Robot.parse_notes` (property)
   What the parser approximated or dropped: free joints treated as fixed, bodies left at zero mass, settotalmass scaling. Empty list for a model that needed none.
+- `Robot.plan(q_start, q_goal, checker, **kw)`
+  Plan a collision free path between two configurations.
 - `Robot.point_to_point(q0, qf, amax=None, n=100)`
   Time-optimal synchronized trapezoidal move under the URDF's velocity limits (joints with no declared limit fall back to 1 rad/s).
 - `Robot.q_index(joint_name)`
   Index into q for a named joint.
 - `Robot.random_configs(n, dtype=None)`
   Uniform random configurations inside the joint limits, (n, dof). Revolute joints with infinite limits are sampled over a full turn; prismatic joints with infinite limits raise ValueError. dtype defaults to the chain's compiled dtype.
+- `Robot.reachability(n=20000, link=None, **kw)`
+  Voxelised reachability map, with occupancy and mean manipulability.
 - `Robot.sphere_model(spheres)`
   Build a collision SphereModel. spheres: {link_name_or_index: [(x,y,z,r)]}.
+- `Robot.summary(**kw)`
+  Plain text description of the model: joints, limits, masses, reach.
 - `Robot.to(device=None, dtype=None)`
   Move to a device and/or recompile at a float precision, in place.
 - `Robot.to_mjcf(geometry=True, meshdir='', meshdir_strip='')`
   Export this robot as an MJCF string (URDF -> MuJoCo). See kinfast.mjcf.emit for what is reproduced and how it is verified.
+- `Robot.total_mass` (property)
 - `Robot.transform_points(points, q, from_link, to_link='world')`
   Express points given in `from_link`'s frame in `to_link`'s frame (or the world frame). points: (N,3) shared across the batch or (B,N,3), as a tensor or anything torch can make one from. Returns (B,N,3).
+- `Robot.twist(q, qd, link=None)`
+  Spatial velocity of a link, (B, 6) as (linear, angular).
 - `Robot.upper` (property)
+- `Robot.workspace(n=10000, link=None, **kw)`
+  Monte Carlo cloud of reachable positions for a link.
 
 ### `load(path, ee_link=None, mappings=None, dtype=torch.float32)`
 
@@ -1052,6 +1082,26 @@ Safe, kinematics-relevant repairs on the Robot IR.
 Fields: `code`, `where`, `message`
 
 ### `repair(robot: kinfast.ir.Robot)`
+
+## `kinfast.velocity`
+
+Frame velocities and accelerations.
+
+### `acceleration(chain, q, qd, qdd, link_index)`
+
+Spatial acceleration of a link, (B, 6) as (linear, angular) in world axes.
+
+### `jacobian_dot_qd(chain, q, qd, link_index)`
+
+The (dJ/dq . qd) qd term, (B, 6), without deriving it by hand.
+
+### `link_velocities(chain, q, qd)`
+
+Twists of every link at once, (B, n_links, 6).
+
+### `twist(chain, q, qd, link_index)`
+
+Spatial velocity of a link, (B, 6) as (linear, angular) in world axes.
 
 ## `kinfast.viz`
 
