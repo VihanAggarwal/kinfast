@@ -201,7 +201,7 @@ class Studio:
                     ha="center", va="center", transform=ax.transAxes)
 
         self.fig.text(0.035, 0.955, "kinfast studio", color=INK, fontsize=15,
-                      fontweight="600")
+                      fontweight="bold")
         self.status = self.fig.text(
             0.163, 0.9565,
             f"{name}   {robot.dof} dof   {robot.n_links} links",
@@ -211,7 +211,7 @@ class Studio:
             self.fig.add_artist(plt.Line2D(
                 [0.035, 0.975], [y, y], color=GRID, linewidth=0.8))
         self.fig.text(0.035, 0.315, "joints", color=DIM, fontsize=8.5,
-                      fontweight="600")
+                      fontweight="bold")
 
         # a slider per joint, laid out in two columns under the figure
         self.sliders = []
