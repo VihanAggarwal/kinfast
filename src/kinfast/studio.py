@@ -113,7 +113,11 @@ def bench_single_query(robot, report=print):
         n = 500
         t0 = time.perf_counter()
         for _ in range(n):
-            fast._raw(ql)
+            # the public call, which assembles 4x4 transforms like the tensor
+            # path it is being compared against. fast._raw is quicker but hands
+            # back a flat list of floats, so timing it here would be comparing
+            # different work.
+            fast.fk(ql)
         out["compiled"] = (time.perf_counter() - t0) / n * 1e6
     except Exception as exc:
         report(f"  compiled path unavailable: {type(exc).__name__}: {exc}")
@@ -169,41 +173,62 @@ class Studio:
         self.q = torch.zeros(1, robot.dof)
         self.bench = {}
 
-        self.fig = plt.figure(figsize=(15, 8.6), facecolor=BG)
+        self.fig = plt.figure(figsize=(15.5, 9.0), facecolor=BG)
         self.fig.canvas.manager.set_window_title(f"kinfast studio - {name}")
+        # Two rows of two panels rather than four stacked ones. Four in a
+        # column left each of them too short to read a curve in.
         gs = self.fig.add_gridspec(
-            4, 2, width_ratios=[1.35, 1], height_ratios=[1, 1, 1, 1],
-            left=0.03, right=0.97, top=0.93, bottom=0.30, wspace=0.18, hspace=0.75)
+            2, 3, width_ratios=[1.45, 1, 1], height_ratios=[1, 1],
+            left=0.035, right=0.975, top=0.905, bottom=0.36,
+            wspace=0.26, hspace=0.42)
 
         self.ax3d = self.fig.add_subplot(gs[:, 0], projection="3d")
         self.ax_thr = self.fig.add_subplot(gs[0, 1])
-        self.ax_lat = self.fig.add_subplot(gs[1, 1])
-        self.ax_ik = self.fig.add_subplot(gs[2, 1])
-        self.ax_plan = self.fig.add_subplot(gs[3, 1])
+        self.ax_lat = self.fig.add_subplot(gs[0, 2])
+        self.ax_ik = self.fig.add_subplot(gs[1, 1])
+        self.ax_plan = self.fig.add_subplot(gs[1, 2])
         for ax, t, hint in (
                 (self.ax_thr, "throughput against batch size", "run benchmarks"),
                 (self.ax_lat, "single query latency", "run benchmarks"),
                 (self.ax_ik, "inverse kinematics against restarts", "run benchmarks"),
                 (self.ax_plan, "planned motion", "plan around an obstacle")):
             _style_axes(ax, t)
+            # an empty panel showing a 0 to 1 axis is just noise; the ticks
+            # arrive with the data
+            ax.set_xticks([])
+            ax.set_yticks([])
             ax.text(0.5, 0.5, f"press  {hint}", color=DIM, fontsize=9,
                     ha="center", va="center", transform=ax.transAxes)
 
-        self.fig.text(0.03, 0.965, "kinfast studio", color=INK, fontsize=15,
+        self.fig.text(0.035, 0.955, "kinfast studio", color=INK, fontsize=15,
                       fontweight="600")
         self.status = self.fig.text(
-            0.155, 0.966,
+            0.163, 0.9565,
             f"{name}   {robot.dof} dof   {robot.n_links} links",
             color=DIM, fontsize=9.5)
+        # hairlines separating header, plots and controls
+        for y in (0.937, 0.335):
+            self.fig.add_artist(plt.Line2D(
+                [0.035, 0.975], [y, y], color=GRID, linewidth=0.8))
+        self.fig.text(0.035, 0.315, "joints", color=DIM, fontsize=8.5,
+                      fontweight="600")
 
         # a slider per joint, laid out in two columns under the figure
         self.sliders = []
         lo, hi = robot.lower.tolist(), robot.upper.tolist()
-        per_col = (robot.dof + 1) // 2
+        # Spacing is derived from the joint count rather than fixed, because a
+        # 16 dof robot used to run its last slider straight into the buttons.
+        n_cols = 3 if robot.dof > 12 else 2
+        per_col = -(-robot.dof // n_cols)
+        top_y, floor_y = 0.288, 0.108
+        step = min(0.029, (top_y - floor_y) / max(per_col, 1))
+        # the left margin has to clear the joint name, which matplotlib draws
+        # outside the slider axes
+        x0, col_w = 0.085, 0.895 / n_cols
         for i, name_j in enumerate(robot.joint_names):
             col, row = divmod(i, per_col)
-            ax = self.fig.add_axes([0.06 + col * 0.47, 0.235 - row * 0.028,
-                                    0.34, 0.016], facecolor=PANEL)
+            ax = self.fig.add_axes([x0 + col * col_w, top_y - row * step,
+                                    col_w * 0.58, 0.014], facecolor=PANEL)
             short = name_j if len(name_j) <= 14 else name_j[:6] + ".." + name_j[-6:]
             s = Slider(ax, short, lo[i], hi[i], valinit=0.0, color=ACCENT)
             s.label.set_color(DIM)
@@ -213,23 +238,27 @@ class Studio:
             s.on_changed(self._on_slider)
             self.sliders.append(s)
 
+        specs = [("home", self._home), ("random pose", self._random),
+                 ("solve ik", self._solve), ("plan around", self._plan),
+                 ("workspace", self._workspace),
+                 ("run benchmarks", self._run_bench), ("save png", self._save)]
+        # centred as a group, so the row stays balanced if buttons are added
+        bw, gap, by, bh = 0.118, 0.016, 0.032, 0.040
+        span = len(specs) * bw + (len(specs) - 1) * gap
+        x = (1.0 - span) / 2.0
+
         def button(x, label, cb, color=PANEL):
-            ax = self.fig.add_axes([x, 0.035, 0.122, 0.042])
+            ax = self.fig.add_axes([x, by, bw, bh])
             b = Button(ax, label, color=color, hovercolor="#1f1f1f")
             b.label.set_color(INK)
             b.label.set_fontsize(9)
             b.on_clicked(cb)
             return b
 
-        self.buttons = [
-            button(0.045, "home", self._home),
-            button(0.175, "random pose", self._random),
-            button(0.305, "solve ik", self._solve),
-            button(0.435, "plan around", self._plan),
-            button(0.565, "workspace", self._workspace),
-            button(0.695, "run benchmarks", self._run_bench),
-            button(0.825, "save png", self._save),
-        ]
+        self.buttons = []
+        for label, cb in specs:
+            self.buttons.append(button(x, label, cb))
+            x += bw + gap
         self._draw_robot()
 
     # ---- state changes

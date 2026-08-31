@@ -96,7 +96,11 @@ def main():
             fn()
         return (time.perf_counter() - t0) / n * 1e6
 
-    t_cg_fk = bench_us(lambda: fast._raw(ql))
+    # Public API on both sides. Timing fast._raw here would flatter the
+    # compiled path: it hands back a flat list of floats, while the tensor
+    # path it is compared against returns assembled 4x4 transforms. Building
+    # those costs about 10 us, which is most of the compiled call.
+    t_cg_fk = bench_us(lambda: fast.fk(ql), n=2000)
     t_cg_j = bench_us(lambda: fast.jacobian(ql, ee))
     t_t_fk = bench_us(lambda: robot.fk_all(q1), n=500)
     t_t_j = bench_us(lambda: robot.jacobian(q1), n=300)
