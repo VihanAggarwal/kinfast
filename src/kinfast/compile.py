@@ -25,11 +25,19 @@ class CompiledChain:
     joint_axis: torch.Tensor     # (n_links, 3)
     joint_type: torch.Tensor     # (n_links,) long: 0 fixed, 1 revolute, 2 prismatic
     q_index: torch.Tensor        # (n_links,) long, -1 if fixed
+    # A joint reads its value as scale * q[q_index] + offset. Both are 1 and 0
+    # for an ordinary joint. A mimic joint instead points q_index at the slot
+    # of the joint that drives it and carries that relation here, so it costs
+    # no degree of freedom and every consumer that indexes through q_index
+    # keeps working unchanged.
+    joint_scale: torch.Tensor    # (n_links,)
+    joint_offset: torch.Tensor   # (n_links,)
     topo_order: list
     lower: torch.Tensor          # (dof,)
     upper: torch.Tensor          # (dof,)
     vmax: torch.Tensor           # (dof,) joint velocity limits (0 if unspecified)
     joint_names: list            # (dof,) movable joint names, ordered by q index
+    link_joint_names: list       # (n_links,) joint driving each link, None for the root
     link_mass: torch.Tensor      # (n_links,)
     link_com: torch.Tensor       # (n_links, 3) COM in link frame
     link_inertia: torch.Tensor   # (n_links, 3, 3) inertia about COM in link frame
@@ -44,8 +52,38 @@ class CompiledChain:
     # tensors that carry the model's real numbers, and the ones that are
     # integer bookkeeping (never cast to a float dtype)
     _FLOAT_FIELDS = ("joint_origin", "joint_axis", "lower", "upper", "vmax",
+                     "joint_scale", "joint_offset",
                      "link_mass", "link_com", "link_inertia")
     _INT_FIELDS = ("parent", "joint_type", "q_index")
+
+    def expand_q(self, q: torch.Tensor) -> torch.Tensor:
+        """(B, dof) actuated values -> (B, n_movable) per joint values.
+
+        Every movable joint gets its own entry, in joint_names order for the
+        independent ones followed by the driven ones in link order. Needed to
+        talk to a tool that does not implement <mimic> and therefore expects one
+        value per joint: MuJoCo and PyBullet both ignore the tag on URDF import,
+        so handing them a reduced vector silently misplaces the driven joints.
+        """
+        movable = [i for i in range(self.n_links) if int(self.q_index[i]) >= 0]
+        cols = self.q_index[movable].to(q.device)
+        sc = self.joint_scale[movable].to(device=q.device, dtype=q.dtype)
+        off = self.joint_offset[movable].to(device=q.device, dtype=q.dtype)
+        return q[:, cols] * sc + off
+
+    def movable_joint_names(self) -> list:
+        """Names matching expand_q's columns, driven joints included."""
+        return [self.link_joint_names[i] for i in range(self.n_links)
+                if int(self.q_index[i]) >= 0]
+
+    @property
+    def has_mimic(self):
+        """True if any joint is driven by another rather than actuated.
+
+        Worth asking before an algorithm that assumes one joint per degree of
+        freedom: on a mimic chain two joints can share a q column, and each
+        contributes through its own scale factor."""
+        return bool((self.joint_scale != 1).any() or (self.joint_offset != 0).any())
 
     @property
     def dtype(self):
@@ -112,8 +150,50 @@ def compile_robot(robot: Robot, dtype=torch.float32) -> CompiledChain:
             [[ixx, ixy, ixz], [ixy, iyy, iyz], [ixz, iyz, izz]], dtype=dtype)
 
     joint_by_child = {j.child: j for j in robot.joints}
+    joint_by_name = {j.name: j for j in robot.joints}
+    link_jnames = [None] * n
+    scale = torch.ones(n, dtype=dtype)
+    offset = torch.zeros(n, dtype=dtype)
+
+    def resolve_mimic(j, seen=()):
+        """Collapse a chain of mimics down to (root joint, multiplier, offset).
+
+        A joint may mimic a joint that itself mimics another, so the relation
+        has to be composed rather than read once. Composing q = k2*(k1*qr + o1)
+        + o2 gives k2*k1 and k2*o1 + o2."""
+        if j.mimic is None:
+            return j, 1.0, 0.0
+        if j.name in seen:
+            raise ValueError(
+                f"joint {j.name} mimics itself through {' -> '.join(seen)}; "
+                "a mimic cycle has no independent joint to drive it")
+        src_name, mult, off = j.mimic
+        src = joint_by_name.get(src_name)
+        if src is None:
+            raise ValueError(
+                f"joint {j.name} mimics {src_name!r}, which does not exist")
+        if src.type not in MOVABLE:
+            raise ValueError(
+                f"joint {j.name} mimics {src_name!r}, which is "
+                f"{src.type} and so has nothing to drive it")
+        root, k, o = resolve_mimic(src, seen + (j.name,))
+        return root, mult * k, mult * o + off
+
     lowers, uppers, vels, jnames = [], [], [], []
+    by_slot = {}
+    slot_of_joint = {}
     next_q = 0
+    # first pass: independent joints claim the q slots
+    for name in names:
+        i = index[name]
+        j = joint_by_child.get(name)
+        if j is None or j.type not in MOVABLE or j.mimic is not None:
+            continue
+        # keyed by identity, not name: a malformed file can declare two
+        # joints with the same name and they still need separate slots
+        slot_of_joint[id(j)] = next_q
+        next_q += 1
+
     for name in names:
         i = index[name]
         j = joint_by_child.get(name)
@@ -129,13 +209,34 @@ def compile_robot(robot: Robot, dtype=torch.float32) -> CompiledChain:
         # non-unit <axis> and repair was skipped.
         axis[i] = a / a.norm().clamp_min(1e-12)
         jtype[i] = _TYPE_CODE.get(j.type, 0)
+        link_jnames[i] = j.name
         if j.type in MOVABLE:
-            q_index[i] = next_q
-            next_q += 1
-            lowers.append(j.limit[0])
-            uppers.append(j.limit[1])
-            vels.append(j.velocity)
-            jnames.append(j.name)
+            driver, k, o = resolve_mimic(j)
+            slot = slot_of_joint[id(driver)]
+            q_index[i] = slot
+            scale[i] = k
+            offset[i] = o
+            if j.mimic is None:
+                by_slot[slot] = [j.limit[0], j.limit[1], j.velocity, j.name]
+            else:
+                # the driven joint's own limit restricts what the driving one
+                # may do, mapped back through q_this = k * q_root + o
+                lo_m, hi_m = j.limit
+                if hi_m > lo_m and k != 0.0:
+                    a, b = (lo_m - o) / k, (hi_m - o) / k
+                    lo_s, hi_s = (a, b) if k > 0 else (b, a)
+                    cur = by_slot.setdefault(
+                        slot, [driver.limit[0], driver.limit[1],
+                               driver.velocity, driver.name])
+                    cur[0] = max(cur[0], lo_s)
+                    cur[1] = min(cur[1], hi_s)
+
+    for s in range(next_q):
+        lo, hi, v, nm = by_slot[s]
+        lowers.append(lo)
+        uppers.append(hi)
+        vels.append(v)
+        jnames.append(nm)
 
     # topological order: BFS from root using parent pointers
     order, frontier = [], [index[root]]
@@ -152,11 +253,12 @@ def compile_robot(robot: Robot, dtype=torch.float32) -> CompiledChain:
     return CompiledChain(
         n_links=n, dof=next_q, link_names=names, link_index=index,
         parent=parent, joint_origin=origin, joint_axis=axis, joint_type=jtype,
-        q_index=q_index, topo_order=order,
+        q_index=q_index, joint_scale=scale, joint_offset=offset,
+        topo_order=order,
         lower=torch.tensor(lowers, dtype=dtype),
         upper=torch.tensor(uppers, dtype=dtype),
         vmax=torch.tensor(vels, dtype=dtype),
-        joint_names=jnames,
+        joint_names=jnames, link_joint_names=link_jnames,
         link_mass=link_mass, link_com=link_com, link_inertia=link_inertia,
         gravity=tuple(float(c) for c in getattr(robot, "gravity",
                                                 (0.0, 0.0, -9.81))),

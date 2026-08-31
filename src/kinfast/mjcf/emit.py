@@ -214,4 +214,18 @@ def emit_mjcf(robot: Robot, geometry: bool = True, meshdir: str = "",
                         f'file={quoteattr(_mesh_file(path, meshdir_strip))}{sc}/>')
         head.append('  </asset>')
     head.append('  <worldbody>')
-    return "\n".join(head + lines + ['  </worldbody>', '</mujoco>']) + "\n"
+
+    # MJCF has no <mimic>; the equivalent is an equality constraint, where
+    # joint1 = polycoef[0] + polycoef[1] * joint2. Dropping it would emit a
+    # file describing a robot with more degrees of freedom than the source.
+    tail = ['  </worldbody>']
+    coupled = [j for j in robot.joints if getattr(j, "mimic", None)]
+    if coupled:
+        tail.append('  <equality>')
+        for j in coupled:
+            src, mult, off = j.mimic
+            poly = _f([off, mult, 0.0, 0.0, 0.0])
+            tail.append(f'    <joint joint1={quoteattr(j.name)} '
+                        f'joint2={quoteattr(src)} polycoef="{poly}"/>')
+        tail.append('  </equality>')
+    return "\n".join(head + lines + tail + ["</mujoco>"]) + "\n"

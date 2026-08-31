@@ -167,10 +167,10 @@ def parse_urdf_string(text: str) -> Robot:
     for el in root.findall("joint"):
         j = _parse_joint(el)
         m = el.find("mimic")
-        if m is not None:
-            notes.append(
-                f"joint {j.name}: <mimic> of {m.get('joint')} is not applied, "
-                "so this joint is treated as independently actuated")
+        if m is not None and m.get("joint"):
+            j.mimic = (m.get("joint"),
+                       float(m.get("multiplier", 1.0)),
+                       float(m.get("offset", 0.0)))
         lo, hi = j.limit
         if el.find("limit") is None and j.type in ("revolute", "prismatic"):
             notes.append(f"joint {j.name}: {j.type} with no <limit>, "

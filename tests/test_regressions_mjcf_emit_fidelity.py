@@ -206,26 +206,48 @@ def test_xarm6_emits_a_loadable_model():
 @pytest.mark.skipif(not os.path.exists(PANDA), reason="panda.urdf not present")
 def test_panda_mass_matrix_matches_mujoco():
     """Panda has two zero-mass inertial links (panda_link8, panda_grasptarget);
-    M used to be off by 8.9% against mj_fullM."""
+    M used to be off by 8.9% against mj_fullM.
+
+    The Panda hand is also the reason this test is not a plain elementwise
+    comparison. Its URDF declares the second finger as a <mimic> of the first,
+    so kinfast reduces the model to one gripper coordinate, while MuJoCo keeps
+    a joint per finger because it ignores the tag on URDF import. The two are
+    not in disagreement: with one actuator driving both fingers, the inertia
+    felt at that actuator is the sum of theirs. The relation between the two
+    matrices is exactly the coordinate change M_reduced = A^T M_full A, where A
+    maps the actuated vector onto every joint, so that is what gets asserted.
+    It is a stronger check than the old one, because it pins the reduction as
+    well as the inertias."""
     robot = kinfast.load(PANDA)
     m = mujoco.MjModel.from_xml_string(robot.to_mjcf(geometry=False))
     d = mujoco.MjData(m)
     chain = robot.chain
-    cols = _dof_columns(m, chain)
-    order = [va for _qa, va in cols]
+
+    # A[j, c] is how far joint j moves per unit of actuated coordinate c
+    full = chain.movable_joint_names()
+    jaddr = {mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, j): (
+        m.jnt_qposadr[j], m.jnt_dofadr[j]) for j in range(m.njnt)}
+    A = np.zeros((len(full), chain.dof))
+    movable = [i for i in range(chain.n_links) if int(chain.q_index[i]) >= 0]
+    for row, i in enumerate(movable):
+        A[row, int(chain.q_index[i])] = float(chain.joint_scale[i])
+    order = [jaddr[nm][1] for nm in full]
+
     rng = np.random.RandomState(0)
     lo, hi = chain.lower.double().numpy(), chain.upper.double().numpy()
     for _ in range(6):
         q = lo + (hi - lo) * rng.rand(chain.dof)
+        qt = torch.tensor(q, dtype=torch.float64).unsqueeze(0)
+        qfull = chain.expand_q(qt)[0].numpy()
         d.qpos[:] = m.qpos0
         d.qvel[:] = 0
-        for k, (qa, _va) in enumerate(cols):
-            d.qpos[qa] = q[k]
+        for nm, val in zip(full, qfull):
+            d.qpos[jaddr[nm][0]] = val
         mujoco.mj_forward(m, d)
         M_mj = np.zeros((m.nv, m.nv))
         mujoco.mj_fullM(m, d, M_mj)
         M_mj = M_mj[np.ix_(order, order)]
-        M_kf = robot.mass_matrix(
-            torch.tensor(q, dtype=torch.float64).unsqueeze(0))[0].numpy()
-        scale = max(1.0, np.abs(M_mj).max())
-        assert np.abs(M_kf - M_mj).max() < 1e-6 * scale
+        M_reduced = A.T @ M_mj @ A
+        M_kf = robot.mass_matrix(qt)[0].numpy()
+        scale = max(1.0, np.abs(M_reduced).max())
+        assert np.abs(M_kf - M_reduced).max() < 1e-6 * scale

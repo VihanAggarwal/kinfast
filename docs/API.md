@@ -316,16 +316,22 @@ Sum of every link's mass, as a 0-dim tensor.
 
 Compile a Robot IR into flat tensors for batched kinematics.
 
-### class `CompiledChain(n_links: int, dof: int, link_names: list, link_index: dict, parent: torch.Tensor, joint_origin: torch.Tensor, joint_axis: torch.Tensor, joint_type: torch.Tensor, q_index: torch.Tensor, topo_order: list, lower: torch.Tensor, upper: torch.Tensor, vmax: torch.Tensor, joint_names: list, link_mass: torch.Tensor, link_com: torch.Tensor, link_inertia: torch.Tensor, gravity: tuple = (0.0, 0.0, -9.81), _version: int = 0)`
+### class `CompiledChain(n_links: int, dof: int, link_names: list, link_index: dict, parent: torch.Tensor, joint_origin: torch.Tensor, joint_axis: torch.Tensor, joint_type: torch.Tensor, q_index: torch.Tensor, joint_scale: torch.Tensor, joint_offset: torch.Tensor, topo_order: list, lower: torch.Tensor, upper: torch.Tensor, vmax: torch.Tensor, joint_names: list, link_joint_names: list, link_mass: torch.Tensor, link_com: torch.Tensor, link_inertia: torch.Tensor, gravity: tuple = (0.0, 0.0, -9.81), _version: int = 0)`
 
-Fields: `n_links`, `dof`, `link_names`, `link_index`, `parent`, `joint_origin`, `joint_axis`, `joint_type`, `q_index`, `topo_order`, `lower`, `upper`, `vmax`, `joint_names`, `link_mass`, `link_com`, `link_inertia`, `gravity`
+Fields: `n_links`, `dof`, `link_names`, `link_index`, `parent`, `joint_origin`, `joint_axis`, `joint_type`, `q_index`, `joint_scale`, `joint_offset`, `topo_order`, `lower`, `upper`, `vmax`, `joint_names`, `link_joint_names`, `link_mass`, `link_com`, `link_inertia`, `gravity`
 
 Methods:
 
 - `CompiledChain.dtype` (property)
   The float dtype the constants were compiled at.
+- `CompiledChain.expand_q(q: torch.Tensor) -> torch.Tensor`
+  (B, dof) actuated values -> (B, n_movable) per joint values.
+- `CompiledChain.has_mimic` (property)
+  True if any joint is driven by another rather than actuated.
 - `CompiledChain.invalidate_cache()`
   Drop cached derived constants (FK origin rotations, prismatic directions, movable-joint index tensors). FK already notices an in-place edit of a chain tensor on its own, so this is the escape hatch for a change it cannot see. Returns self so it can be chained.
+- `CompiledChain.movable_joint_names() -> list`
+  Names matching expand_q's columns, driven joints included.
 - `CompiledChain.to(device=None, dtype=None)`
   Move and/or cast the compiled constants, in place.
 
@@ -667,11 +673,13 @@ Fields: `kind`, `mesh_path`, `scale`, `size`, `origin_xyz`, `origin_rpy`
 
 Fields: `mass`, `com`, `inertia`
 
-### class `Joint(name: str, type: str, parent: str, child: str, origin_xyz: tuple = (0.0, 0.0, 0.0), origin_rpy: tuple = (0.0, 0.0, 0.0), axis: tuple = (0.0, 0.0, 1.0), limit: tuple = (0.0, 0.0), velocity: float = 0.0, effort: float = 0.0)`
+### class `Joint(name: str, type: str, parent: str, child: str, origin_xyz: tuple = (0.0, 0.0, 0.0), origin_rpy: tuple = (0.0, 0.0, 0.0), axis: tuple = (0.0, 0.0, 1.0), limit: tuple = (0.0, 0.0), velocity: float = 0.0, effort: float = 0.0, mimic: tuple = None)`
 
-Fields: `name`, `type`, `parent`, `child`, `origin_xyz`, `origin_rpy`, `axis`, `limit`, `velocity`, `effort`
+Fields: `name`, `type`, `parent`, `child`, `origin_xyz`, `origin_rpy`, `axis`, `limit`, `velocity`, `effort`, `mimic`
 
 ### class `Link(name: str, inertial: kinfast.ir.Inertial | None = None, visual: kinfast.ir.Geometry | None = None, collision: kinfast.ir.Geometry | None = None)`
+
+One rigid body.
 
 Fields: `name`, `inertial`, `visual`, `collision`
 
@@ -684,6 +692,10 @@ Methods:
 - `Robot.dof() -> int`
 - `Robot.movable_joints() -> list`
 - `Robot.root_link() -> str`
+
+### `geometries(slot) -> list`
+
+Every Geometry in a Link's visual or collision slot, as a flat list.
 
 ## `kinfast.jacobian`
 

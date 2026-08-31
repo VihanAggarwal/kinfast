@@ -58,6 +58,11 @@ class Joint:
     limit: tuple = (0.0, 0.0)    # (lower, upper) radians/metres
     velocity: float = 0.0
     effort: float = 0.0
+    # (source joint name, multiplier, offset) for a joint driven by another,
+    # as q_this = multiplier * q_source + offset. URDF spells this <mimic>,
+    # and a parallel gripper is the everyday example: one actuator, two
+    # fingers. A mimic joint is not a degree of freedom.
+    mimic: tuple = None
 
 
 MOVABLE = {"revolute", "continuous", "prismatic"}

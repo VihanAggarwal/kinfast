@@ -66,11 +66,15 @@ def _com_jacobian(chain, world, L, consts=None):
             col = int(chain.q_index[i])
             axis_w = world[:, i, :3, :3] @ consts["axis"][i]
             p_i = world[:, i, :3, 3]
+            # a mimic joint moves by scale per unit of its driver and shares
+            # that driver's column, so contributions accumulate. On an ordinary
+            # chain scale is 1 and no column is written twice.
+            k = float(chain.joint_scale[i])
             if jt == 1:  # revolute
-                Jv[:, :, col] = torch.cross(axis_w, com_world - p_i, dim=-1)
-                Jw[:, :, col] = axis_w
+                Jv[:, :, col] += k * torch.cross(axis_w, com_world - p_i, dim=-1)
+                Jw[:, :, col] += k * axis_w
             else:        # prismatic
-                Jv[:, :, col] = axis_w
+                Jv[:, :, col] += k * axis_w
         i = int(chain.parent[i])
     return Jv, Jw, R
 

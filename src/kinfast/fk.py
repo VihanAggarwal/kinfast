@@ -87,13 +87,18 @@ def _cache(chain: CompiledChain, device, dtype):
     rev = torch.nonzero(movable & (jt == 1), as_tuple=False).flatten()
     pris = torch.nonzero(movable & (jt == 2), as_tuple=False).flatten()
     axes = chain.joint_axis.to(device=device, dtype=dtype)
+    sc = chain.joint_scale.to(device=device, dtype=dtype)
+    off = chain.joint_offset.to(device=device, dtype=dtype)
     entry = {
         "oR": oR, "op": op, "axes": axes,
         "rev": rev, "rev_q": qi[rev], "rev_axes": axes[rev],
-        "rev_oR": oR[rev],
+        "rev_oR": oR[rev], "rev_scale": sc[rev], "rev_off": off[rev],
         "pris": pris, "pris_q": qi[pris],
         "pris_dir": (oR[pris] @ axes[pris].unsqueeze(-1)).squeeze(-1),
-        "pris_op": op[pris],
+        "pris_op": op[pris], "pris_scale": sc[pris], "pris_off": off[pris],
+        # an ordinary chain leaves every joint at scale 1, offset 0, and can
+        # skip the affine step entirely
+        "affine": bool((sc != 1).any() or (off != 0).any()),
     }
     store[key] = entry
     return entry
@@ -109,12 +114,16 @@ def _local_rp(chain: CompiledChain, q: torch.Tensor):
 
     if c["rev"].numel():
         vals = q[:, c["rev_q"]]                                   # (B, r)
+        if c["affine"]:
+            vals = vals * c["rev_scale"] + c["rev_off"]
         R = T.axis_angle_to_matrix(
             c["rev_axes"].unsqueeze(0).expand(B, -1, 3), vals)    # (B, r, 3, 3)
         local_R = local_R.clone()
         local_R[:, c["rev"]] = c["rev_oR"].unsqueeze(0) @ R
     if c["pris"].numel():
         vals = q[:, c["pris_q"]]                                  # (B, p)
+        if c["affine"]:
+            vals = vals * c["pris_scale"] + c["pris_off"]
         local_p = local_p.clone()
         local_p[:, c["pris"]] = (c["pris_op"].unsqueeze(0)
                                  + c["pris_dir"].unsqueeze(0) * vals.unsqueeze(-1))

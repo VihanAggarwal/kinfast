@@ -48,11 +48,15 @@ def jacobian_rp(chain: CompiledChain, q: torch.Tensor, link_index: int,
         if jt != 0:
             col = int(chain.q_index[i])
             axis_world = wR[i] @ axes[i]              # (B, 3)
+            # a mimic joint moves by scale per unit of the joint driving it, and
+            # shares that joint's column, so contributions accumulate. Both are
+            # no-ops on an ordinary chain: scale is 1 and no column repeats.
+            k = float(chain.joint_scale[i])
             if jt == 1:  # revolute
-                J[:, :3, col] = torch.cross(axis_world, p_ee - wp[i], dim=-1)
-                J[:, 3:, col] = axis_world
+                J[:, :3, col] += k * torch.cross(axis_world, p_ee - wp[i], dim=-1)
+                J[:, 3:, col] += k * axis_world
             else:        # prismatic
-                J[:, :3, col] = axis_world
+                J[:, :3, col] += k * axis_world
         i = int(chain.parent[i])
     return J
 

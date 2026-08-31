@@ -53,14 +53,20 @@ def _roundtrip(robot, xml, n=20):
     chain = robot.chain
     addr = {mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, j): m.jnt_qposadr[j]
             for j in range(m.njnt)}
-    cols = [(k, addr[nm]) for k, nm in enumerate(chain.joint_names)]
+    # MuJoCo keeps one qpos entry per joint, including the ones URDF declares
+    # as driven by another. expand_q maps the actuated vector onto all of them,
+    # which is what makes the two models describe the same robot.
+    cols = [(k, addr[nm]) for k, nm in enumerate(chain.movable_joint_names())
+            if nm in addr]
     rng = np.random.RandomState(0)
     lo, hi = chain.lower.numpy(), chain.upper.numpy()
     for _ in range(n):
         q = lo + (hi - lo) * rng.rand(chain.dof)
+        qt = torch.tensor(q, dtype=torch.float32).unsqueeze(0)
+        qfull = chain.expand_q(qt)[0].numpy()
         d.qpos[:] = 0
         for k, a in cols:
-            d.qpos[a] = q[k]
+            d.qpos[a] = qfull[k]
         mujoco.mj_forward(m, d)
         world = forward_kinematics(chain, torch.tensor(q, dtype=torch.float32).unsqueeze(0))[0]
         for b in range(1, m.nbody):

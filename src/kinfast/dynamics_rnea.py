@@ -130,6 +130,7 @@ def _consts(chain: CompiledChain, device, dtype):
     parent = [int(x) for x in chain.parent]
     jtype = [int(x) for x in chain.joint_type]
     qidx = [int(x) for x in chain.q_index]
+    jscale = [float(x) for x in chain.joint_scale]
     order = list(chain.topo_order)
 
     # Subtree mass is purely topological, so it never has to be recomputed.
@@ -141,6 +142,7 @@ def _consts(chain: CompiledChain, device, dtype):
     comp_mass = torch.tensor(comp_mass_f, dtype=dtype, device=device)
 
     entry = {
+        "jscale": jscale,                      # (n,) mimic factor, 1 if none
         "mass": mass,                          # (n,)
         "com": com,                            # (n,3)
         "inertia_com": inertia_com,            # (n,3,3) about COM, link frame
@@ -242,6 +244,7 @@ def rnea(chain: CompiledChain, q, qd, qdd, gravity=True) -> torch.Tensor:
     a_base = zero3 if g_vec is None else (-g_vec).expand(B, 3)
 
     parent, jtype, qidx, axes = c["parent"], c["jtype"], c["qidx"], c["axes"]
+    jscale = c["jscale"]
     com, mass, Ic = c["com"], c["mass"], c["inertia_com"]
 
     w = [None] * n
@@ -269,8 +272,12 @@ def rnea(chain: CompiledChain, q, qd, qdd, gravity=True) -> torch.Tensor:
         col = qidx[i]
         if col >= 0:
             z = axes[i]                              # unit axis in link i coords
-            zqd = z * qd[:, col].unsqueeze(-1)
-            zqdd = z * qdd[:, col].unsqueeze(-1)
+            # a mimic joint turns at scale times the rate of the joint driving
+            # it, and reads that joint's column. scale is 1 on every ordinary
+            # joint, so this costs nothing on a normal chain.
+            k = jscale[i]
+            zqd = z * (qd[:, col] * k).unsqueeze(-1)
+            zqdd = z * (qdd[:, col] * k).unsqueeze(-1)
             if jtype[i] == 1:                        # revolute
                 wd_i = wd_i + _cross(w_i, zqd) + zqdd
                 w_i = w_i + zqd
@@ -294,7 +301,11 @@ def rnea(chain: CompiledChain, q, qd, qdd, gravity=True) -> torch.Tensor:
         col = qidx[i]
         if col >= 0:
             src = moment[i] if jtype[i] == 1 else force[i]
-            tau_cols[col] = (src * axes[i]).sum(-1)
+            # and it projects its wrench back onto the coordinate that drives
+            # it, through the same factor, adding to whatever is already there
+            contrib = jscale[i] * (src * axes[i]).sum(-1)
+            tau_cols[col] = (contrib if tau_cols[col] is None
+                             else tau_cols[col] + contrib)
         p = parent[i]
         if p >= 0:
             f_p = _mv(lR[i], force[i])
@@ -313,6 +324,14 @@ def crba(chain: CompiledChain, q) -> torch.Tensor:
     """
     if chain.dof == 0:
         return torch.zeros(q.shape[0], 0, 0, dtype=q.dtype, device=q.device)
+    if chain.has_mimic:
+        # The composite-rigid-body recursion assumes one joint per column, so a
+        # mimic joint sharing its driver's column would drop the driver's own
+        # contribution. The Jacobian route handles that and gives the same
+        # matrix, more slowly. Mimic chains are grippers and linkages, which
+        # are small, so the slower route costs nothing that matters here.
+        from kinfast.dynamics import mass_matrix as _jac_mass_matrix
+        return _jac_mass_matrix(chain, q)
     _check_q(chain, q)
     c = _consts(chain, q.device, q.dtype)
     if not c["has_inertia"]:
