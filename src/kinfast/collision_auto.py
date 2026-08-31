@@ -41,6 +41,7 @@ import torch
 
 from kinfast import transforms as T
 from kinfast.collision import SphereModel
+from kinfast.ir import geometries as ir_geometries
 
 SUPPORTED_KINDS = ("sphere", "cylinder", "box")
 
@@ -180,25 +181,41 @@ def auto_spheres(robot_ir, chain, spacing: float = 0.05, padding: float = 0.0,
         idx = chain.link_index.get(name)
         if idx is None:
             continue  # link is not part of this compiled chain
-        geom = link.collision
-        if (geom is None or geom.kind not in SUPPORTED_KINDS) and fallback_to_visual:
-            geom = link.visual
-        sl = spheres_for_geometry(geom, spacing=spacing, padding=padding,
-                                  max_per_axis=max_per_axis)
+        geoms = [g for g in ir_geometries(link.collision)
+                 if g.kind in SUPPORTED_KINDS]
+        if not geoms and fallback_to_visual:
+            geoms = [g for g in ir_geometries(link.visual)
+                     if g.kind in SUPPORTED_KINDS]
+        # a link is often several primitives, and covering only the first one
+        # leaves the rest invisible to collision checking
+        sl = []
+        for geom in geoms:
+            sl.extend(spheres_for_geometry(geom, spacing=spacing,
+                                           padding=padding,
+                                           max_per_axis=max_per_axis))
         if sl:
             out[idx] = sl
     return out
 
 
-def _reason(geom):
-    """Why a Geometry yields no spheres, or None if it is usable."""
-    if geom is None or geom.kind == "none":
+def _reason(slot):
+    """Why a link's geometry slot yields no spheres, or None if any of it is
+    usable. A link with three boxes and one mesh is fine; it is only a hole
+    when nothing in the slot can be approximated."""
+    geoms = ir_geometries(slot)
+    if not geoms:
         return "none"
-    if geom.kind not in SUPPORTED_KINDS:
-        return "mesh"
-    if not any(float(v) > 0.0 for v in geom.size):
-        return "degenerate"
-    return None
+    reasons = []
+    for geom in geoms:
+        if geom.kind == "none":
+            reasons.append("none")
+        elif geom.kind not in SUPPORTED_KINDS:
+            reasons.append("mesh")
+        elif not any(float(v) > 0.0 for v in geom.size):
+            reasons.append("degenerate")
+        else:
+            return None
+    return reasons[0]
 
 
 def unsupported_links(robot_ir, chain, fallback_to_visual: bool = False):

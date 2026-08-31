@@ -23,10 +23,27 @@ class Geometry:
 
 @dataclass
 class Link:
+    """One rigid body.
+
+    URDF allows any number of <visual> and <collision> elements per link, and
+    real files use that: a base plate is often three boxes, a gripper finger a
+    pad plus a body. So each slot holds None, a single Geometry, or a list of
+    them. Read them through `geometries()` rather than touching the slot, which
+    saves every caller from caring which of the three it got.
+    """
     name: str
     inertial: Optional[Inertial] = None
     visual: Optional[Geometry] = None
     collision: Optional[Geometry] = None
+
+
+def geometries(slot) -> list:
+    """Every Geometry in a Link's visual or collision slot, as a flat list."""
+    if slot is None:
+        return []
+    if isinstance(slot, Geometry):
+        return [slot]
+    return [g for g in slot if isinstance(g, Geometry)]
 
 
 @dataclass

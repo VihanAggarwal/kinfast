@@ -140,14 +140,52 @@ def parse_urdf_string(text: str) -> Robot:
     root = ET.fromstring(text)
     if root.tag != "robot":
         raise ValueError(f"root element must be <robot>, got <{root.tag}>")
-    links = {}
+    links, notes = {}, []
+
+    def slot(el, tag):
+        """None, one Geometry, or a list of them. Keeping the single case
+        unwrapped means the common link is shaped exactly as it always was."""
+        geoms = [g for g in (_parse_geometry(e) for e in el.findall(tag))
+                 if g is not None and g.kind != "none"]
+        if not geoms:
+            return None
+        return geoms[0] if len(geoms) == 1 else geoms
+
     for el in root.findall("link"):
         link = _parse_link(el)
-        link.visual = _parse_geometry(el.find("visual"))
-        link.collision = _parse_geometry(el.find("collision"))
+        if link.name in links:
+            notes.append(f"link {link.name}: declared more than once, "
+                         "later declaration wins")
+        link.visual = slot(el, "visual")
+        link.collision = slot(el, "collision")
+        n_col = len(el.findall("collision"))
+        if n_col > 1:
+            notes.append(f"link {link.name}: {n_col} collision elements")
         links[link.name] = link
-    joints = [_parse_joint(el) for el in root.findall("joint")]
-    return Robot(root.get("name", "robot"), links, joints)
+
+    joints = []
+    for el in root.findall("joint"):
+        j = _parse_joint(el)
+        m = el.find("mimic")
+        if m is not None:
+            notes.append(
+                f"joint {j.name}: <mimic> of {m.get('joint')} is not applied, "
+                "so this joint is treated as independently actuated")
+        lo, hi = j.limit
+        if el.find("limit") is None and j.type in ("revolute", "prismatic"):
+            notes.append(f"joint {j.name}: {j.type} with no <limit>, "
+                         f"assumed {lo:.4g} to {hi:.4g}")
+        elif lo > hi:
+            notes.append(f"joint {j.name}: limits given as {hi:.4g} to "
+                         f"{lo:.4g}, which is inverted, so they were swapped")
+        elif lo == hi and j.type in ("revolute", "prismatic"):
+            notes.append(f"joint {j.name}: limits are both {lo:.4g}, so it "
+                         "cannot move, but it still consumes a degree of freedom")
+        joints.append(j)
+
+    robot = Robot(root.get("name", "robot"), links, joints)
+    robot.parse_notes.extend(notes)
+    return robot
 
 
 def parse_urdf_file(path: str) -> Robot:

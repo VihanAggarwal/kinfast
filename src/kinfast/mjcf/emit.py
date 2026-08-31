@@ -29,6 +29,7 @@ from xml.sax.saxutils import quoteattr
 
 from kinfast.ir import Robot, MOVABLE
 from kinfast.urdf.parse import _rpy_to_mat
+from kinfast.ir import geometries as ir_geometries
 
 
 def _mat_to_quat(R):
@@ -103,8 +104,10 @@ def emit_mjcf(robot: Robot, geometry: bool = True, meshdir: str = "",
 
     def geom_lines(link, indent):
         out = []
-        for role, g in (("visual", link.visual), ("collision", link.collision)):
-            if g is None or g.kind == "none":
+        pairs = ([("visual", g) for g in ir_geometries(link.visual)]
+                 + [("collision", g) for g in ir_geometries(link.collision)])
+        for role, g in pairs:
+            if g.kind == "none":
                 continue
             contact = (' contype="0" conaffinity="0" group="1"' if role == "visual"
                        else ' group="0"')
