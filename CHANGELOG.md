@@ -5,6 +5,36 @@ Notable changes, newest first. Dates are when the work landed on main.
 ## Unreleased
 
 ### Added
+- Joints driven by other joints are honoured (`<mimic>`). A parallel gripper
+  now reports the one degree of freedom it has rather than two, and sampling,
+  IK and planning can no longer explore states the hardware cannot reach. The
+  relation is folded into the joint as a scale and offset on the driving
+  joint's coordinate, so it costs no degree of freedom and every algorithm that
+  indexes joints keeps working. Chains of mimics compose, and cycles or
+  references to a joint that does not exist are refused.
+- `chain.expand_q` and `chain.movable_joint_names` map the actuated vector onto
+  every joint, for talking to tools that ignore `<mimic>` on URDF import, which
+  includes MuJoCo and PyBullet.
+- `chain.has_mimic`, and `kinfast.ir.geometries` for reading a link's geometry
+  slot without caring whether it holds one shape or several.
+
+### Fixed
+- Every `<collision>` and `<visual>` element of a link is kept. Only the first
+  survived before, so a link written as several boxes, which is how real files
+  describe a base plate or a gripper pad, was collision checked as one of them
+  and a planner would return paths through the rest.
+- The mass matrix, gravity torque, RNEA and the geometric and COM Jacobians
+  were wrong on a chain with a driven joint: they wrote into a joint's column
+  instead of adding to it and ignored the coupling factor. All now agree with
+  the gradient of potential energy and with each other.
+- Emitted MJCF carries the coupling as an equality constraint instead of
+  silently dropping it, which had produced a file describing a robot with more
+  degrees of freedom than the source.
+- The parser records what it repaired instead of doing it silently: invented
+  limits for a joint that declared none, inverted limits it swapped, zero width
+  limits, duplicate link names, and links carrying several shapes.
+- A file declaring two joints with the same name no longer collapses them.
+
 - Time optimal timing along a path (`kinfast.topp`, or `robot.time_path`).
   A planner gives a shape with no speed attached; this finds the fastest
   traverse of that shape inside the joint limits, by reducing the per joint
